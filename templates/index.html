@@ -1,0 +1,89 @@
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DATA 4MINES</title>
+<style>
+body {
+    background: #000;
+    color: white;
+    font-family: Arial;
+    margin: 0;
+    padding: 0;
+}
+
+/* HEADER */
+.header {
+    background: linear-gradient(90deg, #FFD700, #FFA500);
+    color: #000;
+    text-align: center;
+    padding: 15px;
+    font-size: 28px;
+    font-weight: bold;
+}
+
+/* MENU */
+.menu {
+    background: #111;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 15px;
+    padding: 10px;
+}
+.menu a {
+    color: #FFD700;
+    text-decoration: none;
+    font-size: 14px;
+}
+
+/* MACHINE CARDS WITH SPACE */
+.machine-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px; /* SPACE BETWEEN MACHINES */
+    justify-content: center;
+    padding: 20px;
+}
+
+.machine-card {
+    background: #1a1a1a;
+    border: 2px solid #FFD700;
+    border-radius: 12px;
+    padding: 20px;
+    width: 300px;
+    text-align: center;
+}
+.machine-card img {
+    width: 100%;
+    border-radius: 8px;
+}
+
+.price { color: #00FF00; font-size: 22px; font-weight: bold; }
+.profit { color: #FFD700; font-size: 20px; font-weight: bold; }
+.total { color: #00FFFF; font-size: 20px; font-weight: bold; }
+
+/* PHONE VIEW: make everything bigger and stack */
+@media (max-width: 768px) {
+    .header { font-size: 24px; }
+    .menu a { font-size: 12px; }
+    .machine-card {
+        width: 90%; /* 1 machine per row */
+        margin: 10px auto;
+        font-size: 18px; /* BIGGER TEXT ON PHONE */
+    }
+    .price { font-size: 26px; }
+    .profit { font-size: 24px; }
+    .total { font-size: 24px; }
+}
+</style>
+</head>
+
+<div class="machine-container">
+  <div class="machine-card">
+    <img src="machine1.jpg">
+    <p>Lock: 15 Days</p>
+    <h2>AI Miner #1</h2>
+    <p>Cost: <span class="price">10000 UGX</span></p>
+    <p>Profit: <span class="profit">22500 UGX</span></p>
+    <p>Total: <span class="total">32500 UGX</span></p>
+  </div>
+</div>
