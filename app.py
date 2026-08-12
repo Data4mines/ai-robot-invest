@@ -129,10 +129,9 @@ def dashboard():
     c.execute("SELECT balance FROM users WHERE id=?", (session['uid'],))
 row = c.fetchone()
 bal = row[0] if row else 0.0 # This prevents the crash
-conn.close()
-    body = "<div class='card'><h2>Welcome to DATA 4MINES</h2><h3>For Real and Good Profits</h3><p>Balance: <span class='balance'>" + str(bal) + " UGX</span></p><a href='/shop'><button>Buy Machines</button></a></div>"
+conn.close"
     return layout("Dashboard", body, session["uid"])
-
+body = f"<div class='card'><h2>Welcome to DATA 4MINES</h2><h3>For Real and Good Profits</h3><div style='background:#0f3d0f;padding:15px;border-radius:10px;margin:15px 0;'><h3 style='color:#4CAF50;margin:0;'>CURRENT BALANCE</h3><h2 style='color:white;margin:5px 0;'>{bal:,.0f} UGX</h2></div>"
 @app.route("/about")
 def about():
     body = "<div class='card'><h2>About DATA 4MINES</h2><p>The company began in USA New York in 2015 and is spreading to every continent. It came to East Africa in 2022 and signed a contract of $17 Billions with East African banks and network systems.</p></div>"
