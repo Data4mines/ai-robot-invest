@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Deposit</title>
+    <style>
+        body{background:#000;color:white;font-family:sans-serif;padding:20px;margin:0}
+        .box{background:#111;padding:20px;border-radius:12px;max-width:500px;margin:auto}
+        textarea,input,button{width:100%;padding:14px;margin-top:10px;border-radius:8px;border:1px solid #333;font-size:16px;box-sizing:border-box}
+        textarea{background:#222;color:white;min-height:120px}
+        input{background:#222;color:white}
+        button{background:#00ff88;color:black;border:none;font-weight:bold;font-size:16px}
+        button:active{background:#00cc6a}
+        .hint{color:#aaa;font-size:12px;line-height:1.6}
+        h2{margin-top:0}
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h2>Deposit Funds</h2>
+        <p>Send money to: <b>MTN: 0782 XXX XXX</b></p>
+        <p class="hint">
+            1. Pay with Mobile Money<br>
+            2. Copy the FULL SMS you received<br>
+            3. Long press below > Paste<br>
+            4. Enter amount > Submit
+        </p>
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <p style="color:#00ff88">{{ message }}</p>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+
+        <form method="POST">
+            <textarea name="sms" placeholder="Long press here > Paste FULL SMS" required onpaste="return true"></textarea>
+            <input type="number" name="amount" placeholder="Enter Amount from SMS" required min="1000">
+            <button type="submit">SUBMIT & ADD TO BALANCE</button>
+        </form>
+        
+        <a href="/dashboard" style="color:#00ff88;display:block;margin-top:15px;text-align:center">← Back to Dashboard</a>
+    </div>
+</body>
+</html>

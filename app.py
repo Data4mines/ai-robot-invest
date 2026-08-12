@@ -360,4 +360,63 @@ def login():
         if user: session["uid"] = user[0]; return redirect("/")
     return layout("Login", "<h2>Login</h2><div class='card'><form method=post><input name=phone placeholder='Phone'><br><input id='pass' name=password type=password placeholder='Password'> <button type='button' onclick='togglePass()'>👁️</button><br><button>Login</button></form></div>", None)
 
+import re
+from datetime import datetime
+
+def create_deposit_table():
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS deposit
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  user_id INTEGER,
+                  amount REAL,
+                  sms_text TEXT,
+                  status TEXT DEFAULT "approved",
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    conn.commit()
+    conn.close()
+
+create_deposit_table() # runs once when app starts
+
+@app.route('/deposit', methods=['GET', 'POST'])
+def deposit():
+    if 'uid' not in session:
+        return redirect('/login')
+        
+    if request.method == 'POST':
+        sms = request.form['sms']
+        amount_input = float(request.form['amount'])
+        
+        # Auto-read amount from SMS
+        match = re.search(r'(\d[\d,]*)\s*UGX', sms, re.IGNORECASE)
+        amount = amount_input
+        if match:
+            amount = float(match.group(1).replace(',', ''))
+
+        conn = sqlite3.connect(DB)
+        c = conn.cursor()
+        
+        # 1. Add to user balance
+        c.execute("UPDATE user SET balance = balance + ? WHERE id = ?", (amount, session['uid']))
+        
+        # 2. Save deposit record
+        c.execute("INSERT INTO deposit (user_id, amount, sms_text) VALUES (?, ?, ?)", 
+                  (session['uid'], amount, sms))
+        
+        conn.commit()
+        conn.close()
+        
+        return redirect('/dashboard?success=' + str(amount))
+    
+    return layout("Deposit", '''<div class="card">
+        <h2>Deposit Funds</h2>
+        <p>Send money to: <b>MTN: 0782 XXX XXX</b></p>
+        <p class="hint">1. Pay > 2. Copy SMS > 3. Paste below</p>
+        <form method="POST">
+            <textarea name="sms" placeholder="Long press here > Paste FULL SMS" required style="width:100%;min-height:120px;font-size:16px;padding:12px"></textarea>
+            <input type="number" name="amount" placeholder="Enter Amount from SMS" required min="1000" style="width:100%;padding:12px;font-size:16px">
+            <button type="submit" style="width:100%;padding:14px;font-size:16px;background:#00ff88;color:black;border:none">SUBMIT & ADD TO BALANCE</button>
+        </form>
+        </div>''')
+
 if __name__=="__main__": app.run(debug=True)
