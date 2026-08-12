@@ -383,6 +383,15 @@ def deposit():
     if 'uid' not in session:
         return redirect('/login')
         
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+    
+    # Get current balance
+    c.execute("SELECT balance FROM user WHERE id =?", (session['uid'],))
+    row = c.fetchone()
+    balance = row[0] if row and row[0] else 0.0
+    success_amount = request.args.get('success')
+
     if request.method == 'POST':
         sms = request.form['sms']
         amount_input = float(request.form['amount'])
@@ -393,30 +402,19 @@ def deposit():
         if match:
             amount = float(match.group(1).replace(',', ''))
 
-        conn = sqlite3.connect(DB)
-        c = conn.cursor()
-        
         # 1. Add to user balance
-        c.execute("UPDATE user SET balance = balance + ? WHERE id = ?", (amount, session['uid']))
+        c.execute("UPDATE user SET balance = balance +? WHERE id =?", (amount, session['uid']))
         
         # 2. Save deposit record
-        c.execute("INSERT INTO deposit (user_id, amount, sms_text) VALUES (?, ?, ?)", 
+        c.execute("INSERT INTO deposit (user_id, amount, sms_text) VALUES (?,?,?)", 
                   (session['uid'], amount, sms))
         
         conn.commit()
         conn.close()
         
-        return redirect('/dashboard?success=' + str(amount))
+        return redirect('/deposit?success=' + str(amount))
     
-    return layout("Deposit", '''<div class="card">
-        <h2>Deposit Funds</h2>
-        <p>Send money to: <b>MTN: 0782 XXX XXX</b></p>
-        <p class="hint">1. Pay > 2. Copy SMS > 3. Paste below</p>
-        <form method="POST">
-            <textarea name="sms" placeholder="Long press here > Paste FULL SMS" required style="width:100%;min-height:120px;font-size:16px;padding:12px"></textarea>
-            <input type="number" name="amount" placeholder="Enter Amount from SMS" required min="1000" style="width:100%;padding:12px;font-size:16px">
-            <button type="submit" style="width:100%;padding:14px;font-size:16px;background:#00ff88;color:black;border:none">SUBMIT & ADD TO BALANCE</button>
-        </form>
-        </div>''')
+    conn.close()
+    return render_template('deposit.html', balance=balance, success=float(success_amount) if success_amount else None)
 
 if __name__=="__main__": app.run(debug=True)
