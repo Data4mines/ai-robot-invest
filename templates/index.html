@@ -1,189 +1,82 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DATA 4MINES</title>
-<style>
-body {
-    background: #000;
-    color: white;
-    font-family: Arial, sans-serif;
-    margin: 0;
-    padding: 0;
-}
-
-/* HEADER */
-.header {
-    background: linear-gradient(90deg, #FFD700, #FFA500);
-    color: #000;
-    text-align: center;
-    padding: 15px;
-    font-size: 28px;
-    font-weight: bold;
-}
-
-/* MENU */
-.menu {
-    background: #111;
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 15px;
-    padding: 12px;
-}
-.menu a {
-    color: #FFD700;
-    text-decoration: none;
-    font-size: 14px;
-    font-weight: bold;
-
-    Line 16 .header { ... }
-Line 23 }
-Line 25 /* MENU */
-Line 26 .menu {
-Line 27   background: #111;
-Line 28   display: flex;
-Line 29 }  <-- ENDS HERE
-}
-.menu a:hover { color: white; }
-
-/* MACHINE CARDS WITH SPACE */
-.machine-container {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 20px; /* SPACE BETWEEN MACHINES */
-    justify-content: center;
-    padding: 20px;
-}
-
-.machine-card {
-    background: #1a1a1a;
-    border: 2px solid #FFD700;
-    border-radius: 12px;
-    padding: 20px;
-    width: 300px;
-    text-align: center;
-    box-shadow: 0 0 10px #FFD700;
-}
-
-.machine-card img {
-    width: 100%;
-    border-radius: 8px;
-}
-
-.price { color: #00FF00; font-size: 22px; font-weight: bold; }
-.profit { color: #FFD700; font-size: 20px; font-weight: bold; }
-.total { color: #00FFFF; font-size: 20px; font-weight: bold; }
-
-/* PHONE VIEW */
-@media (max-width: 768px) {
-    .machine-card {
-        width: 90%; /* 1 per row on phone */
-        margin: 10px auto;
-    }
-    .price { font-size: 26px; }
-    .profit { font-size: 24px; }
-    .total { font-size: 24px; }
-    body { font-size: 16px; }
-}
-}
-
-.machine-card {
-    background: #1a1a1a;
-    border: 2px solid #FFD700;
-    border-radius: 12px;
-    padding: 20px;
-    width: 300px; /* Desktop: 3-4 across */
-    text-align: center;
-    box-shadow: 0 0 10px #FFD700;
-    transition: transform 0.2s;
-}
-.machine-card:hover {
-    transform: scale(1.05);
-}
-
-.machine-card img {
-    width: 100%;
-    border-radius: 8px;
-    margin-bottom: 10px;
-}
-
-.price { color: #00FF00; font-size: 22px; font-weight: bold; }
-.profit { color: #FFD700; font-size: 20px; font-weight: bold; }
-.total { color: #00FFFF; font-size: 20px; font-weight: bold; }
-
-.buy-btn {
-    background: #FFD700;
-    color: #000;
-    border: none;
-    padding: 10px 20px;
-    border-radius: 8px;
-    font-weight: bold;
-    cursor: pointer;
-    margin-top: 10px;
-}
-.buy-btn:hover { background: #FFA500; }
-
-/* PHONE VIEW: stack 1 per row and make text BIG */
-@media (max-width: 768px) {
-    .header { font-size: 24px; }
-    .menu a { font-size: 12px; }
-    .machine-card {
-        width: 90%; /* 1 per row on phone */
-        margin: 10px auto;
-        font-size: 16px;
-    }
-    .price { font-size: 26px; }
-    .profit { font-size: 24px; }
-    .total { font-size: 24px; }
-}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Machines - AI Robot Invest</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            background: #000;
+            color: white;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 15px;
+            font-size: 16px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        /* THIS MAKES MACHINES NOT SQUEEZED */
+        .machines-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 15px;
+        }
+        .machine-card {
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 10px;
+            padding: 15px;
+        }
+        .machine-card img {
+            width: 100%;
+            height: auto;
+            border-radius: 8px;
+        }
+        /* IF YOU USE A TABLE */
+        .table-wrapper {
+            overflow-x: auto; /* allows sideways scroll instead of squeeze */
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 600px; /* prevents crushing */
+        }
+        td, th {
+            padding: 10px;
+            border: 1px solid #333;
+            text-align: left;
+        }
+    </style>
 </head>
 <body>
+    <div class="container">
+        <h1>Our Machines</h1>
 
-<div class="header">
-    DATA 4MINES - AI INVESTMENT
-</div>
+        <!-- OPTION A: USE CARDS - RECOMMENDED FOR PHONE -->
+        <div class="machines-grid">
+            <div class="machine-card">
+                <img src="/static/machine1.jpg" alt="Machine 1">
+                <h3>Machine Name</h3>
+                <p>Price: $100</p>
+                <p>Daily Profit: $5</p>
+            </div>
+            <!-- duplicate this card for each machine -->
+        </div>
 
-<div class="menu">
-    <a href="/">Home</a>
-    <a href="/dashboard">Dashboard</a>
-    <a href="/deposit">Deposit</a>
-    <a href="/withdraw">Withdraw</a>
-    <a href="/referrals">Referrals</a>
-    <a href="/logout">Logout</a>
-</div>
+        <!-- OPTION B: IF YOU MUST USE A TABLE -->
+        <!--
+        <div class="table-wrapper">
+            <table>
+                <tr><th>Machine</th><th>Price</th><th>Profit</th></tr>
+                <tr><td>Machine 1</td><td>$100</td><td>$5</td></tr>
+            </table>
+        </div>
+        -->
 
-<h2 style="text-align:center; margin-top:20px;">Machine Shop - 30 Machines</h2>
-
-<div class="machine-container">  <!-- WRAP ALL MACHINES -->
-  
-  <!-- MACHINE 1 -->
-  <div class="machine-card">
- <img src="{{ url_for('static', filename='machines/ai_' + machine.name|replace(' ', '_')|lower + '.png') }}" alt="{{ machine.name }}">   
-    <p>Lock: 15 Days</p>
-    <h2>AI Miner #1</h2>
-    <p>Cost: <span class="price">10000 UGX</span></p>
-    <p>Profit: <span class="profit">22500 UGX</span></p>
-    <p>Total Return: <span class="total">32500 UGX</span></p>
-    <button class="buy-btn">Buy Now</button>
-  </div>
-
-  <!-- MACHINE 2 -->
-  <div class="machine-card">
-    <img src="{{ url_for('static', filename='machines/ai_super.jpg') }}" alt="AI Miner 2">
-    <p>Lock: 15 Days</p>
-    <h2>AI Miner #2</h2>
-    <p>Cost: <span class="price">35000 UGX</span></p>
-    <p>Profit: <span class="profit">78750 UGX</span></p>
-    <p>Total Return: <span class="total">113750 UGX</span></p>
-    <button class="buy-btn">Buy Now</button>
-  </div>
-
-  <!-- COPY THIS BLOCK FOR MACHINE 3 TO 30 -->
-  <!-- Just change the image name, price, profit -->
-
-</div>
-
+    </div>
 </body>
 </html>
