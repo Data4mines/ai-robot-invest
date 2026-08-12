@@ -36,6 +36,14 @@ body {
     text-decoration: none;
     font-size: 14px;
     font-weight: bold;
+
+    Line 16 .header { ... }
+Line 23 }
+Line 25 /* MENU */
+Line 26 .menu {
+Line 27   background: #111;
+Line 28   display: flex;
+Line 29 }  <-- ENDS HERE
 }
 .menu a:hover { color: white; }
 
@@ -46,6 +54,38 @@ body {
     gap: 20px; /* SPACE BETWEEN MACHINES */
     justify-content: center;
     padding: 20px;
+}
+
+.machine-card {
+    background: #1a1a1a;
+    border: 2px solid #FFD700;
+    border-radius: 12px;
+    padding: 20px;
+    width: 300px;
+    text-align: center;
+    box-shadow: 0 0 10px #FFD700;
+}
+
+.machine-card img {
+    width: 100%;
+    border-radius: 8px;
+}
+
+.price { color: #00FF00; font-size: 22px; font-weight: bold; }
+.profit { color: #FFD700; font-size: 20px; font-weight: bold; }
+.total { color: #00FFFF; font-size: 20px; font-weight: bold; }
+
+/* PHONE VIEW */
+@media (max-width: 768px) {
+    .machine-card {
+        width: 90%; /* 1 per row on phone */
+        margin: 10px auto;
+    }
+    .price { font-size: 26px; }
+    .profit { font-size: 24px; }
+    .total { font-size: 24px; }
+    body { font-size: 16px; }
+}
 }
 
 .machine-card {
