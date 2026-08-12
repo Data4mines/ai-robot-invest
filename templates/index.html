@@ -160,7 +160,7 @@ Line 29 }  <-- ENDS HERE
   
   <!-- MACHINE 1 -->
   <div class="machine-card">
-    <img src="{{ url_for('static', filename='machines/ai_master.jpg') }}" alt="AI Miner 1">
+ <img src="{{ url_for('static', filename='machines/ai_' + machine.name|replace(' ', '_')|lower + '.png') }}" alt="{{ machine.name }}">   
     <p>Lock: 15 Days</p>
     <h2>AI Miner #1</h2>
     <p>Cost: <span class="price">10000 UGX</span></p>
