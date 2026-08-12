@@ -197,30 +197,6 @@ def my_machines():
         body += "<div class='card'><h3>" + m[1] + "</h3>" + vip_tag + "<p>Cost: <b class='balance'>" + str(m[2]) + " UGX</b></p><p>Profit: <span class='profit'>" + str(m[6]) + " UGX</span></p><p>Total Return: <span class='total'>" + str(total_return) + " UGX</span></p><p>Earn: " + str(m[3]) + " UGX/day</p></div>"
     return layout("My Machines", body + "</div>", session["uid"])
 
-@app.route("/deposit", methods=["GET","POST"])
-def deposit():
-    if not session.get("uid"): return redirect("/login")
-    numbers = get_deposit_numbers()
-    if request.method == "POST":
-        amt_input = int(request.form["amount"])
-        msg = request.form["approval_msg"]
-        valid, reason = check_sms_valid(msg, amt_input)
-        conn = sqlite3.connect(DB); c = conn.cursor()
-        if valid:
-            c.execute("UPDATE users SET balance=balance+? WHERE id=?", (amt_input, session["uid"]))
-            c.execute("UPDATE admin_wallet SET balance=balance+?", (amt_input,))
-            c.execute("INSERT INTO deposits(user_id,amount,approval_msg,status,time) VALUES(?,?,?,?,?)", (session["uid"], amt_input, msg, "APPROVED", time.time()))
-            notify_user(session["uid"], "✅ Deposit of " + str(amt_input) + " UGX APPROVED")
-            result = "<div class='card'><h2>Deposit APPROVED</h2><p>" + str(amt_input) + " UGX added</p></div>"
-        else:
-            result = "<div class='card'><h2 class='rejected'>Deposit REJECTED</h2><p>Reason: " + reason + "</p></div>"
-        conn.commit(); conn.close()
-        return layout("Result", result, session["uid"])
-    body = "<h2>Deposit</h2><div class='card'><p>Send money to:</p>"
-    for n in numbers: body += "<h3>" + n[1] + "</h3><p>Number: <b>" + n[0] + "</b> <button class='copy-btn' onclick=\"copyNum('" + n[0] + "')\">Copy</button></p>"
-    body += "<form method=post><input name=amount type=number placeholder='Amount' required><br><textarea name=approval_msg placeholder='Paste FULL SMS' rows=3 required></textarea><br><button>Submit</button></form></div>"
-    return layout("Deposit", body, session["uid"])
-
 @app.route("/withdraw", methods=["GET","POST"])
 def withdraw():
     if not session.get("uid"): return redirect("/login")
