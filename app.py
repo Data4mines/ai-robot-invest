@@ -126,7 +126,10 @@ def layout(title, body, uid=None):
 def dashboard():
     if not session.get("uid"): return redirect("/login")
     conn = sqlite3.connect(DB); c = conn.cursor()
-    c.execute("SELECT balance FROM users WHERE id=?", (session["uid"],)); bal = c.fetchone()[0]; conn.close()
+    c.execute("SELECT balance FROM users WHERE id=?", (session['uid'],))
+row = c.fetchone()
+bal = row[0] if row else 0.0 # This prevents the crash
+conn.close()
     body = "<div class='card'><h2>Welcome to DATA 4MINES</h2><h3>For Real and Good Profits</h3><p>Balance: <span class='balance'>" + str(bal) + " UGX</span></p><a href='/shop'><button>Buy Machines</button></a></div>"
     return layout("Dashboard", body, session["uid"])
 
