@@ -1,398 +1,263 @@
 from flask import Flask, request, redirect, session
-import time, sqlite3, hashlib, re, uuid, os
+import time, sqlite3, hashlib, uuid, os, re
+from datetime import datetime
 
 app = Flask(__name__, static_folder='static')
-app.secret_key = "data4mines_pro_v16_5"
+app.secret_key = "data4mines_final_v31_full"
 
 DB = "data4mines.db"
-ADMIN_PHONE = "0792759363"
-TAX_RATE = 0.08
-BUY_REWARD = 10000
+WITHDRAW_TAX = 0.08
 REFER_REWARD = 5000
-DEFAULT_IMG = "/static/machines/ai_titan.jpg"
+BUY_REWARD = 2000
+BG_COLOR = "#000"
+TEXT_COLOR = "#87CEFA" # LIGHT BLUE
+ADMIN_USERNAME = "Twix"
+ADMIN_PASSWORD = "1831"
 
-def hash(p): return hashlib.sha256(p.encode()).hexdigest()
+def hash_password(p): return hashlib.sha256(p.encode()).hexdigest()
+def get_db(): conn = sqlite3.connect(DB); conn.row_factory = sqlite3.Row; return conn
 
 def init_db():
-    print("CREATING DATABASE NOW...")
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, phone TEXT UNIQUE, password TEXT, balance INTEGER DEFAULT 0, is_admin INTEGER DEFAULT 0, ref_code TEXT, referred_by INTEGER)')
-    c.execute('CREATE TABLE IF NOT EXISTS deposit_numbers (id INTEGER PRIMARY KEY, number TEXT, names TEXT)')
-    c.execute('CREATE TABLE IF NOT EXISTS deposits (id INTEGER PRIMARY KEY, user_id INTEGER, amount INTEGER, approval_msg TEXT, status TEXT, time REAL)')
-    c.execute('CREATE TABLE IF NOT EXISTS withdrawals (id INTEGER PRIMARY KEY, user_id INTEGER, amount INTEGER, tax INTEGER, net_amount INTEGER, phone TEXT, names TEXT, network TEXT, status TEXT, request_time REAL)')
-    c.execute('CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY, user_id INTEGER, message TEXT, time REAL)')
-    c.execute('CREATE TABLE IF NOT EXISTS chat (id INTEGER PRIMARY KEY, sender_id INTEGER, receiver_id INTEGER, message TEXT, time REAL)')
-    c.execute('CREATE TABLE IF NOT EXISTS shop (id INTEGER PRIMARY KEY, name TEXT, price INTEGER, daily INTEGER, lock_days INTEGER, img TEXT, total_earn INTEGER, is_vip INTEGER DEFAULT 0)')
-    c.execute('CREATE TABLE IF NOT EXISTS user_machines (id INTEGER PRIMARY KEY, user_id INTEGER, machine_id INTEGER, buy_time REAL, end_time REAL, earned INTEGER DEFAULT 0)')
-    c.execute('CREATE TABLE IF NOT EXISTS admin_wallet (id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 0, pin TEXT)')
+    if not os.path.exists('static/machines'): os.makedirs('static/machines')
+    conn = get_db(); c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, balance REAL DEFAULT 0.0, phone TEXT, refer_code TEXT UNIQUE, referred_by TEXT, is_admin INTEGER DEFAULT 0, is_banned INTEGER DEFAULT 0, created_at REAL)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS deposits(id INTEGER PRIMARY KEY, user_id INTEGER, amount REAL, network TEXT, proof TEXT, tx_id TEXT, sender_number TEXT, sender_name TEXT, deposit_date TEXT, status TEXT DEFAULT 'approved', created_at REAL)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS withdraws(id INTEGER PRIMARY KEY, user_id INTEGER, amount_requested REAL, amount_to_send REAL, phone TEXT, network TEXT, status TEXT DEFAULT 'pending', created_at REAL, approved_at REAL)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS machines(id INTEGER PRIMARY KEY, name TEXT, price REAL, profit REAL, days INTEGER, img TEXT, stock INTEGER DEFAULT 100, is_vip INTEGER DEFAULT 0)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS user_machines(id INTEGER PRIMARY KEY, user_id INTEGER, machine_id INTEGER, bought_at REAL, days_left INTEGER, daily_profit REAL, last_paid REAL, total_earned REAL DEFAULT 0)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY, message TEXT, created_at REAL)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS about(id INTEGER PRIMARY KEY, content TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS referrals(id INTEGER PRIMARY KEY, referrer_code TEXT, referee_id INTEGER, has_bought INTEGER DEFAULT 0, created_at REAL)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS deposit_numbers(id INTEGER PRIMARY KEY, network TEXT, account_name TEXT, number TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS chats(id INTEGER PRIMARY KEY, user_id INTEGER, sender TEXT, message TEXT, created_at REAL)''')
 
-    c.execute("SELECT COUNT(*) FROM admin_wallet")
-    if c.fetchone()[0] == 0: c.execute("INSERT INTO admin_wallet(balance,pin) VALUES(0,'1234')")
-
-    c.execute("SELECT COUNT(*) FROM deposit_numbers")
-    if c.fetchone()[0] == 0: c.execute("INSERT INTO deposit_numbers(number,names) VALUES(?,?)", ("0792759363", "NUWAHEREZA CHRISTINE"))
-
-    c.execute("SELECT COUNT(*) FROM shop")
-    if c.fetchone()[0] == 0:
-        machines = []
-        normal_imgs = ["/static/machines/ai_infinity.jpg","/static/machines/ai_master.jpg","/static/machines/ai_pro.jpg","/static/machines/ai_quantum.jpg","/static/machines/ai_super.jpg"]
-        for i in range(20):
-            price = 10000 + (i * 25000)
-            daily = int(price * 0.15)
-            lock = 15
-            total = daily * lock
-            img = normal_imgs[i % len(normal_imgs)]
-            machines.append(("AI Miner #" + str(i+1), price, daily, lock, img, total, 0))
-
-        vip_data = [
-            ("VIP AI TITAN", 1000000, "/static/machines/ai_titan.jpg"),
-            ("VIP AI ULTRA", 2000000, "/static/machines/ai_ultra.jpg"),
-            ("VIP AI QUANTUM", 3500000, "/static/machines/ai_quantum.jpg"),
-            ("VIP AI SUPER", 5000000, "/static/machines/ai_super.jpg"),
-            ("VIP AI MASTER", 6500000, "/static/machines/ai_master.jpg"),
-            ("VIP AI INFINITY", 7000000, "/static/machines/ai_infinity.jpg"),
-            ("VIP AI PRO", 8000000, "/static/machines/ai_pro.jpg"),
-            ("VIP AI ELITE", 9000000, "/static/machines/ai_titan.jpg"),
-            ("VIP AI KING", 9500000, "/static/machines/ai_ultra.jpg"),
-            ("VIP AI GOD", 10000000, "/static/machines/ai_quantum.jpg"),
-        ]
-        for i, (name, price, img) in enumerate(vip_data):
-            daily = int(price * 0.20)
-            lock = 7
-            total = daily * lock
-            machines.append((name, price, daily, lock, img, total, 1))
-        c.executemany("INSERT INTO shop(name,price,daily,lock_days,img,total_earn,is_vip) VALUES(?,?,?,?,?,?,?)", machines)
-
-    ref_code_admin = "ADMIN" + str(uuid.uuid4())[:4]
-    c.execute("INSERT OR IGNORE INTO users(phone,password,is_admin,ref_code) VALUES(?,?,1,?)", (ADMIN_PHONE, hash("1234"), ref_code_admin))
-    c.execute("UPDATE users SET is_admin=1, ref_code=? WHERE phone=?", (ref_code_admin, ADMIN_PHONE))
+    c.execute("INSERT OR IGNORE INTO about(id,content) VALUES(1,?)",("DATA 4MINES VIP 3-7 Days",))
+    c.execute("INSERT OR IGNORE INTO deposit_numbers(network,account_name,number) VALUES(?,?,?)",("MTN Mobile Money","Nuwahereza Christine","+256792759363"))
+    c.execute("INSERT OR IGNORE INTO users(username,password,phone,refer_code,is_admin,created_at) VALUES(?,?,?,?,?,?)",(ADMIN_USERNAME, hash_password(ADMIN_PASSWORD), "0792759363", "ADMIN123", 1, time.time()))
     conn.commit(); conn.close()
-    print("DATABASE CREATED SUCCESSFULLY")
 
 init_db()
 
-def is_admin(uid):
-    conn = sqlite3.connect(DB); c = conn.cursor()
-    c.execute("SELECT is_admin FROM users WHERE id=?", (uid,)); r = c.fetchone(); conn.close()
-    return r and r[0] == 1
-def notify_user(uid, msg):
-    conn = sqlite3.connect(DB); c = conn.cursor()
-    c.execute("INSERT INTO notifications(user_id,message,time) VALUES(?,?,?)", (uid, msg, time.time()))
+def scan_sms(sms):
+    amount = re.search(r'(?:deposited|received)\s*([0-9,]+)\s*UGX', sms, re.I)
+    tx_id = re.search(r'(?:TX|Ref|Transaction)\s*ID[:\s]*([A-Z0-9]+)', sms, re.I)
+    number = re.search(r'(?:to|from)\s*(\+?256[0-9]{9}|07[0-9]{8})', sms, re.I)
+    name = re.search(r'(?:to|from)\s*([A-Z][a-z]+\s+[A-Z][a-z]+)', sms)
+    return {'amount': int(amount.group(1).replace(',','')) if amount else 0,'tx_id': tx_id.group(1) if tx_id else 'N/A','number': number.group(1) if number else 'N/A','name': name.group(1).strip() if name else 'N/A','date': datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+def update_profits():
+    conn = get_db(); c = conn.cursor(); now = time.time()
+    c.execute("SELECT id,user_id,daily_profit,days_left,last_paid,total_earned FROM user_machines WHERE days_left>0")
+    for um in c.fetchall():
+        um_id, user_id, daily, days, last, earned = um
+        if last is None: last = now - 86400
+        if now - last >= 86400:
+            c.execute("UPDATE users SET balance = balance +? WHERE id=?",(daily,user_id))
+            c.execute("UPDATE user_machines SET days_left = days_left -1, last_paid=?, total_earned=total_earned+? WHERE id=?",(now,daily,um_id))
     conn.commit(); conn.close()
-def notify_all(msg):
-    conn = sqlite3.connect(DB); c = conn.cursor()
-    c.execute("SELECT id FROM users"); users = c.fetchall()
-    for u in users: c.execute("INSERT INTO notifications(user_id,message,time) VALUES(?,?,?)", (u[0], msg, time.time()))
+
+def auto_approve_withdraws():
+    conn = get_db(); c = conn.cursor()
+    c.execute("SELECT id FROM withdraws WHERE status='pending' AND created_at <?", (time.time() - 86400,))
+    for row in c.fetchall(): c.execute("UPDATE withdraws SET status='approved', approved_at=? WHERE id=?",(time.time(),row['id']))
     conn.commit(); conn.close()
-def get_deposit_numbers():
-    conn = sqlite3.connect(DB); c = conn.cursor()
-    c.execute("SELECT number,names FROM deposit_numbers"); nums = c.fetchall(); conn.close()
-    return nums
-def check_sms_valid(sms, expected_amount):
-    sms = sms.upper()
-    numbers = get_deposit_numbers()
-    amount_found = re.findall(r'\d+', sms)
-    amount_found = int(amount_found[0]) if amount_found else 0
-    if amount_found!= expected_amount: return False, "Amount mismatch"
-    number_ok = any(n[0] in sms for n in numbers)
-    if not number_ok: return False, "Number not ours"
-    name_ok = any(n[1].split()[0] in sms for n in numbers)
-    if not name_ok: return False, "Name not ours"
-    return True, "OK"
-def safe_img(img_path):
-    full_path = os.path.join("static/machines", os.path.basename(img_path))
-    if not os.path.exists(full_path): return DEFAULT_IMG
-    return img_path
 
-def layout(title, body, uid=None):
-    notes_html = ""
-    if uid:
-        conn = sqlite3.connect(DB); c = conn.cursor()
-        c.execute("SELECT message FROM notifications WHERE user_id=? ORDER BY time DESC LIMIT 5", (uid,))
-        notes = c.fetchall(); conn.close()
-        for n in notes: notes_html += "<div class='alert'>📢 " + n[0] + "</div>"
-        notes_html = "<div class='card'><h3>Notifications</h3>" + notes_html + "</div>"
+def get_user():
+    if 'uid' in session:
+        update_profits(); auto_approve_withdraws()
+        conn = get_db(); c = conn.cursor(); c.execute("SELECT * FROM users WHERE id=?", (session['uid'],)); u = c.fetchone(); conn.close(); return u
+    return None
 
-    links = "<a href='/'>Home</a> <a href='/about'>About</a> <a href='/shop'>Shop</a> <a href='/my-machines'>My Machines</a> <a href='/referrals'>Referrals</a> <a href='/deposit'>Deposit</a> <a href='/withdraw'>Withdraw</a> <a href='/chat'>💬 Chat</a>"
-    if uid and is_admin(uid): links += " <a href='/admin'>Admin</a>"
-    if not uid: links = "<a href='/about'>About</a> <a href='/login'>Login</a> <a href='/register'>Register</a>"
+def format_number(n): return f"{n:,.0f}"
+def time_left(seconds):
+    if seconds < 0: return "0d 0h"
+    d = int(seconds // 86400); h = int((seconds % 86400) // 3600)
+    return f"{d}d {h}h"
 
-    css = "body{background:#0a0a0a;color:#fff;font-family:Segoe UI;margin:0}header{background:linear-gradient(90deg,#FFD700,#FFA500);color:#000;text-align:center;padding:15px}nav{background:#111;text-align:center;padding:12px}a{color:#FFD700;margin:0 10px;text-decoration:none;font-weight:bold}.container{padding:20px;max-width:1200px;margin:auto}.card{background:#1a1a1a;padding:20px;border-radius:12px;margin:15px 0;text-align:center;border:1px solid #333}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:20px}img{width:100%;height:150px;object-fit:cover;border-radius:8px;background:#222}button{background:#FFD700;color:#000;border:none;padding:10px 15px;border-radius:12px;font-weight:bold;cursor:pointer;margin:5px}button.del{background:#FF0000;color:#fff}input,select,textarea{padding:12px;background:#222;color:#fff;border:1px solid #444;border-radius:8px;width:90%;margin:5px 0}.balance{color:#00FF88;font-size:22px;font-weight:bold}.profit{color:#FFD700}.total{color:#00FFFF;font-size:24px}.tax{color:#FFA500}.vip{color:#FFD700;border:2px solid #FFD700;background:#2a1a00}.alert{background:#2a1a00;padding:10px;border-radius:8px;border:1px solid #FFD700;margin:8px 0}.copy-btn{background:#333;color:#FFD700}.chat-box{height:300px;overflow-y:auto;background:#111;padding:10px;border-radius:8px;text-align:left}.msg-me{text-align:right;color:#00FF88}.msg-them{text-align:left;color:#FFD700}"
-    js = "<script>function copyNum(n){navigator.clipboard.writeText(n);alert('Copied: '+n)} function togglePass(){var x=document.getElementById('pass');x.type=x.type==='password'?'text':'password'} function copyRef(){var c=document.getElementById('ref');navigator.clipboard.writeText(c.value);alert('Referral Link Copied!')}</script>"
-    return "<!DOCTYPE html><html><head><title>" + title + "</title><style>" + css + "</style></head><body>" + js + "<header><h1>DATA 4MINES</h1></header><nav>" + links + "</nav><div class='container'>" + notes_html + body + "</div></body></html>"
+def page_wrap(content, u=None, show_notif=True):
+    top = f'<div style="display:flex;justify-content:space-between;padding:12px 20px;background:#000;position:fixed;top:0;width:100%;border-bottom:2px solid #ffcc00;"><h3 style="color:{TEXT_COLOR}">DATA4MINES</h3><a href="/notifications" style="color:white;font-size:28px;">🔔</a></div>' if u and show_notif else ''
+    bottom = f'''<div style="display:flex;justify-content:space-around;padding:12px;background:#000;position:fixed;bottom:0;width:100%;border-top:2px solid #ffcc00;">
+    <a href="/dashboard" style="color:{TEXT_COLOR}">🏠<br><span style="font-size:11px;">Home</span></a>
+    <a href="/machines" style="color:{TEXT_COLOR}">🏪<br><span style="font-size:11px;">Shop</span></a>
+    <a href="/my_machines" style="color:{TEXT_COLOR}">🤖<br><span style="font-size:11px;">Mine</span></a>
+    <a href="/chat" style="color:{TEXT_COLOR}">💬<br><span style="font-size:11px;">Chat</span></a>
+    <a href="/deposit" style="color:{TEXT_COLOR}">💰<br><span style="font-size:11px;">Deposit</span></a>
+    <a href="/withdraw" style="color:{TEXT_COLOR}">💸<br><span style="font-size:11px;">Withdraw</span></a>
+    <a href="/refer" style="color:{TEXT_COLOR}">🔗<br><span style="font-size:11px;">Refer</span></a>
+    {'<a href="/admin" style="color:'+TEXT_COLOR+'">⚙️<br><span style="font-size:11px;">Admin</span></a>' if u and u['is_admin']==1 else ''}
+    </div>''' if u else ''
+    return f'<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>DATA4MINES</title><style>body{{background:#000;color:{TEXT_COLOR};font-size:16px;font-family:Arial;padding:70px 20px 90px;}}a{{color:{TEXT_COLOR};text-decoration:none;}}input,button,textarea,select{{font-size:16px;width:100%;padding:14px;margin:10px 0;border-radius:10px;border:1px solid #ffcc00;background:#111;color:{TEXT_COLOR};}}.btn{{padding:16px;background:#ffcc00;color:black;border:none;font-weight:bold;border-radius:10px;width:100%;}}.card{{background:#111;padding:18px;border-radius:15px;margin:15px 0;border:1px solid #ffcc00;}}.success{{background:#005500;padding:12px;border-radius:8px;color:#00ff00;}}.warning{{background:#550000;padding:12px;border-radius:8px;color:yellow;}}.total-return{{color:#00ff00;font-weight:bold;}}table{{width:100%;border-collapse:collapse;font-size:14px;}}td,th{{border:1px solid #ffcc00;padding:8px;text-align:left;}}.soldout{{background:#550000;color:red;}}</style></head><body>{top}<div>{content}</div>{bottom}</body></html>'
 
-@app.route("/")
-def dashboard():
-    if not session.get("uid"): return redirect("/login")
-    conn = sqlite3.connect(DB); c = conn.cursor()
-    c.execute("SELECT balance FROM users WHERE id=?", (session['uid'],))
-row = c.fetchone()
-bal = row[0] if row else 0.0 # This prevents the crash
-conn.close"
-    return layout("Dashboard", body, session["uid"])
-body = f"<div class='card'><h2>Welcome to DATA 4MINES</h2><h3>For Real and Good Profits</h3><div style='background:#0f3d0f;padding:15px;border-radius:10px;margin:15px 0;'><h3 style='color:#4CAF50;margin:0;'>CURRENT BALANCE</h3><h2 style='color:white;margin:5px 0;'>{bal:,.0f} UGX</h2></div>"
-@app.route("/about")
-def about():
-    body = "<div class='card'><h2>About DATA 4MINES</h2><p>The company began in USA New York in 2015 and is spreading to every continent. It came to East Africa in 2022 and signed a contract of $17 Billions with East African banks and network systems.</p></div>"
-    return layout("About Us", body, session.get("uid"))
-
-@app.route("/referrals")
-def referrals():
-    if not session.get("uid"): return redirect("/login")
-    conn = sqlite3.connect(DB); c = conn.cursor()
-    c.execute("SELECT ref_code FROM users WHERE id=?", (session["uid"],)); row = c.fetchone()
-    ref_code = row[0] if row and row[0] else None
-    if not ref_code:
-        ref_code = "REF" + str(uuid.uuid4())[:6]
-        c.execute("UPDATE users SET ref_code=? WHERE id=?", (ref_code, session["uid"]))
-        conn.commit()
-    c.execute("SELECT COUNT(*) FROM users WHERE referred_by=?", (session["uid"],)); count = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM user_machines um JOIN users u ON um.user_id=u.id WHERE u.referred_by=?", (session["uid"],)); bought = c.fetchone()[0]
-    link = request.host_url + "register?ref=" + str(ref_code)
-    conn.close()
-    body = "<div class='card'><h2>Referral Program</h2><p>Earn <b class='balance'>" + str(REFER_REWARD) + " UGX</b> for each friend who buys</p><p>Your Referrals: " + str(count) + "</p><p>Friends who bought: " + str(bought) + "</p><p>Your Link:</p><input id='ref' value='" + link + "' readonly><br><button onclick='copyRef()'>Copy Link</button></div>"
-    return layout("Referrals", body, session["uid"])
-
-@app.route("/shop")
-def shop():
-    if not session.get("uid"): return redirect("/login")
-    conn = sqlite3.connect(DB); c = conn.cursor()
-    c.execute("SELECT * FROM shop ORDER BY is_vip, price"); machines = c.fetchall(); conn.close()
-    body = "<h2>Machine Shop - 30 Machines</h2><div class='grid'>"
-    for m in machines:
-        img = safe_img(m[5])
-        vip_class = "vip" if m[7] == 1 else ""
-        vip_tag = "<p class='vip'>VIP MACHINE - 7 DAYS</p>" if m[7] == 1 else "<p>Lock: " + str(m[4]) + " Days</p>"
-        btn = "<form method=post action='/buy/" + str(m[0]) + "'><button>Buy Now</button></form>"
-        body += "<div class='card " + vip_class + "'><img src='" + img + "'>" + vip_tag + "<h3>" + m[1] + "</h3><p>Cost: <b class='balance'>" + str(m[2]) + " UGX</b></p><p>Profit: <span class='profit'>" + str(m[6]) + " UGX</span></p><p>Total Return: <span class='total'>" + str(m[2] + m[6]) + " UGX</span></p><p>Earn: " + str(m[3]) + " UGX/day</p>" + btn + "</div>"
-    return layout("Shop", body + "</div>", session["uid"])
-
-@app.route("/buy/<int:mid>", methods=["POST"])
-def buy(mid):
-    if not session.get("uid"): return redirect("/login")
-    conn = sqlite3.connect(DB); c = conn.cursor()
-    c.execute("SELECT price,lock_days FROM shop WHERE id=?", (mid,)); price, lock = c.fetchone()
-    c.execute("SELECT balance,referred_by FROM users WHERE id=?", (session["uid"],)); bal, ref = c.fetchone()
-    if bal >= price:
-        c.execute("UPDATE users SET balance=balance-? WHERE id=?", (price, session["uid"]))
-        end_time = time.time() + (lock * 24 * 3600)
-        c.execute("INSERT INTO user_machines(user_id,machine_id,buy_time,end_time) VALUES(?,?,?,?)", (session["uid"], mid, time.time(), end_time))
-        c.execute("UPDATE users SET balance=balance+? WHERE id=?", (BUY_REWARD, session["uid"]))
-        notify_user(session["uid"], "🎁 Reward: " + str(BUY_REWARD) + " UGX")
-        if ref:
-            c.execute("UPDATE users SET balance=balance+? WHERE id=?", (REFER_REWARD, ref))
-            notify_user(ref, "🎁 Referral Reward: " + str(REFER_REWARD) + " UGX")
-    conn.commit(); conn.close()
-    return redirect("/my-machines")
-
-@app.route("/my-machines")
-def my_machines():
-    if not session.get("uid"): return redirect("/login")
-    conn = sqlite3.connect(DB); c = conn.cursor()
-    c.execute("SELECT um.id,s.name,s.price,s.daily,s.lock_days,s.is_vip,s.total_earn FROM user_machines um JOIN shop s ON um.machine_id=s.id WHERE um.user_id=?", (session["uid"],))
-    machines = c.fetchall(); conn.close()
-    body = "<h2>My Machines</h2><div class='grid'>"
-    for m in machines:
-        vip_tag = "<p class='vip'>VIP - 7 DAYS</p>" if m[5] == 1 else "<p>Normal - 15 Days</p>"
-        total_return = m[2] + m[6]
-        body += "<div class='card'><h3>" + m[1] + "</h3>" + vip_tag + "<p>Cost: <b class='balance'>" + str(m[2]) + " UGX</b></p><p>Profit: <span class='profit'>" + str(m[6]) + " UGX</span></p><p>Total Return: <span class='total'>" + str(total_return) + " UGX</span></p><p>Earn: " + str(m[3]) + " UGX/day</p></div>"
-    return layout("My Machines", body + "</div>", session["uid"])
-
-@app.route("/withdraw", methods=["GET","POST"])
-def withdraw():
-    if not session.get("uid"): return redirect("/login")
-    if request.method == "POST":
-        amt = int(request.form["amount"])
-        tax = int(amt * TAX_RATE)
-        net = amt - tax
-        phone = request.form["phone"]
-        names = request.form["names"]
-        network = request.form["network"]
-        conn = sqlite3.connect(DB); c = conn.cursor()
-        c.execute("UPDATE users SET balance=balance-? WHERE id=?", (amt, session["uid"]))
-        c.execute("INSERT INTO withdrawals(user_id,amount,tax,net_amount,phone,names,network,status,request_time) VALUES(?,?,?,?,?,?,?,?,?)", (session["uid"], amt, tax, net, phone, names, network, "PENDING", time.time()))
-        conn.commit(); conn.close()
-        notify_user(session["uid"], "Withdrawal request of " + str(amt) + " UGX submitted. 8% tax: " + str(tax) + " UGX")
-        return layout("Success", "<div class='card'><h2>Withdrawal Requested</h2><p>Requested: " + str(amt) + " UGX</p><p class='tax'>Tax 8%: " + str(tax) + " UGX</p><p>You will receive: " + str(net) + " UGX</p></div>", session["uid"])
-    conn = sqlite3.connect(DB); c = conn.cursor()
-    c.execute("SELECT balance FROM users WHERE id=?", (session["uid"],)); bal = c.fetchone()[0]; conn.close()
-    body = "<h2>Withdraw</h2><div class='card'><p>Your Balance: " + str(bal) + " UGX</p><p class='tax'>⚠️ 8% tax deducted</p><form method=post><input name=amount type=number placeholder='Amount' required><br><input name=phone placeholder='Number' required><br><input name=names placeholder='Full Names' required><br><select name=network><option>MTN</option><option>AIRTEL</option></select><br><button>Request</button></form></div>"
-    return layout("Withdraw", body, session["uid"])
-
-@app.route("/chat", methods=["GET","POST"])
-def chat():
-    if not session.get("uid"): return redirect("/login")
-    admin_id = 1
-    if request.method == "POST":
-        msg = request.form["message"]
-        conn = sqlite3.connect(DB); c = conn.cursor()
-        c.execute("INSERT INTO chat(sender_id,receiver_id,message,time) VALUES(?,?,?,?)", (session["uid"], admin_id, msg, time.time()))
-        conn.commit(); conn.close()
-    conn = sqlite3.connect(DB); c = conn.cursor()
-    c.execute("SELECT sender_id,message FROM chat WHERE sender_id=? OR receiver_id=? ORDER BY time", (session["uid"], session["uid"]))
-    msgs = c.fetchall(); conn.close()
-    body = "<h2>Chat with Admin</h2><div class='card'><div class='chat-box'>"
-    for m in msgs: cls = "msg-me" if m[0] == session["uid"] else "msg-them"; body += "<div class='" + cls + "'>" + m[1] + "</div>"
-    body += "</div><form method=post><input name=message placeholder='Type message'><button>Send</button></form></div>"
-    return layout("Chat", body, session["uid"])
-
-@app.route("/admin")
-def admin():
-    if not session.get("uid") or not is_admin(session["uid"]): return "Access Denied"
-    conn = sqlite3.connect(DB); c = conn.cursor()
-    c.execute("SELECT balance FROM admin_wallet WHERE id=1"); wallet = c.fetchone()[0]
-    c.execute("SELECT id,user_id,amount,tax,net_amount,phone,names,network FROM withdrawals WHERE status='PENDING'"); wd = c.fetchall()
-    c.execute("SELECT * FROM shop ORDER BY id"); machines = c.fetchall(); conn.close()
-
-    body = "<h2>Admin Panel</h2>"
-    body += "<div class='card'><h3>Company Wallet: " + str(wallet) + " UGX</h3></div>"
-    body += "<div class='card'><h3>Add New Machine</h3><form method=post action='/add_machine'><input name=name placeholder='Machine Name' required><br><input name=price type=number placeholder='Price' required><br><input name=daily type=number placeholder='Daily Earn' required><br><input name=lock type=number placeholder='Lock Days' required><br><input name=img placeholder='Image path'><br><select name=is_vip><option value=0>Normal</option><option value=1>VIP</option></select><br><button>Add Machine</button></form></div>"
-
-    body += "<div class='card'><h3>Manage Machines</h3><div class='grid'>"
-    for m in machines:
-        img = safe_img(m[5])
-        body += "<div class='card'><img src='" + img + "'><h4>" + m[1] + "</h4><p>" + str(m[2]) + " UGX</p><form method=post action='/delete_machine/" + str(m[0]) + "'><button class='del'>Delete</button></form></div>"
-    body += "</div></div>"
-
-    body += "<div class='card'><h3>Pending Withdrawals</h3>"
-    for w in wd: body += "<form method=post action='/approve_wd/" + str(w[0]) + "'><p>UserID: " + str(w[1]) + " | Requested: " + str(w[2]) + " UGX</p><p class='tax'>Tax 8%: " + str(w[3]) + " UGX | You Send: " + str(w[4]) + " UGX</p><p>To: " + w[5] + " | " + w[6] + " | " + w[7] + "</p><input name=pin type=password placeholder='PIN' required><button>Approve</button></form>"
-    body += "</div><div class='card'><h3>Send Notification to All</h3><form method=post action='/notify_all'><textarea name=msg placeholder='Update message' rows=3 required></textarea><br><button>Send</button></form></div>"
-    return layout("Admin", body, session["uid"])
-
-@app.route("/add_machine", methods=["POST"])
-def add_machine():
-    if not is_admin(session["uid"]): return "Access Denied"
-    name = request.form["name"]
-    price = int(request.form["price"])
-    daily = int(request.form["daily"])
-    lock = int(request.form["lock"])
-    img = request.form["img"] or DEFAULT_IMG
-    is_vip = int(request.form["is_vip"])
-    total = daily * lock
-    conn = sqlite3.connect(DB); c = conn.cursor()
-    c.execute("INSERT INTO shop(name,price,daily,lock_days,img,total_earn,is_vip) VALUES(?,?,?,?,?,?,?)", (name, price, daily, lock, img, total, is_vip))
-    conn.commit(); conn.close()
-    return redirect("/admin")
-
-@app.route("/delete_machine/<int:mid>", methods=["POST"])
-def delete_machine(mid):
-    if not is_admin(session["uid"]): return "Access Denied"
-    conn = sqlite3.connect(DB); c = conn.cursor()
-    c.execute("DELETE FROM shop WHERE id=?", (mid,))
-    conn.commit(); conn.close()
-    return redirect("/admin")
-
-@app.route("/approve_wd/<int:w_id>", methods=["POST"])
-def approve_wd(w_id):
-    if not is_admin(session["uid"]): return "Access Denied"
-    pin = request.form["pin"]
-    conn = sqlite3.connect(DB); c = conn.cursor()
-    c.execute("SELECT pin,balance FROM admin_wallet WHERE id=1"); db_pin, wallet_bal = c.fetchone()
-    c.execute("SELECT user_id,amount,tax,net_amount FROM withdrawals WHERE id=?", (w_id,)); w = c.fetchone()
-    if pin!= db_pin: return layout("Error", "<div class='card'><h2 class='rejected'>Wrong PIN</h2></div>", session["uid"])
-    if wallet_bal < w[3]: return layout("Error", "<div class='card'><h2 class='rejected'>Wallet Low</h2></div>", session["uid"])
-    c.execute("UPDATE admin_wallet SET balance=balance-?", (w[3],))
-    c.execute("UPDATE admin_wallet SET balance=balance+?", (w[2],))
-    c.execute("UPDATE withdrawals SET status='APPROVED' WHERE id=?", (w_id,))
-    notify_user(w[0], "✅ Withdrawal SUCCESSFUL. Requested: " + str(w[1]) + " UGX. Tax 8%: " + str(w[2]) + " UGX. You received: " + str(w[3]) + " UGX")
-    conn.commit(); conn.close()
-    return redirect("/admin")
-
-@app.route("/notify_all", methods=["POST"])
-def notify_all_route():
-    if not is_admin(session["uid"]): return "Access Denied"
-    msg = request.form["msg"]
-    notify_all(msg)
-    return redirect("/admin")
-
-@app.route("/register", methods=["GET","POST"])
+@app.route('/')
+def home(): return redirect('/register')
+@app.route('/register', methods=['GET','POST'])
 def register():
-    if request.method == "POST":
-        phone = request.form["phone"]; password = request.form["password"]
-        ref = request.args.get("ref") or request.form.get("ref")
-        ref_id = None
-        if ref:
-            conn = sqlite3.connect(DB); c = conn.cursor()
-            c.execute("SELECT id FROM users WHERE ref_code=?", (ref,)); r = c.fetchone()
-            if r: ref_id = r[0]; conn.close()
-        conn = sqlite3.connect(DB); c = conn.cursor()
-        try:
-            ref_code = str(uuid.uuid4())[:8]
-            c.execute("INSERT INTO users(phone,password,ref_code,referred_by) VALUES(?,?,?,?)", (phone, hash(password), ref_code, ref_id))
-            c.execute("SELECT id FROM users WHERE phone=?", (phone,)); user = c.fetchone()
-            conn.commit(); conn.close()
-            session["uid"] = user[0]
-            return redirect("/")
-        except:
-            conn.close()
-            return layout("Error", "<div class='card'><h2 class='rejected'>Phone already registered</h2></div>", None)
-    return layout("Register", "<h2>Register</h2><div class='card'><form method=post><input name=phone placeholder='Phone'><br><input id='pass' name=password type=password placeholder='Password'> <button type='button' onclick='togglePass()'>👁️</button><br><input name=ref placeholder='Referral Code Optional'><br><button>Register</button></form></div>", None)
-
-@app.route("/login", methods=["GET","POST"])
-def login():
-    if request.method == "POST":
-        phone = request.form["phone"]; password = request.form["password"]
-        conn = sqlite3.connect(DB); c = conn.cursor()
-        c.execute("SELECT id FROM users WHERE phone=? AND password=?", (phone, hash(password))); user = c.fetchone(); conn.close()
-        if user: session["uid"] = user[0]; return redirect("/")
-    return layout("Login", "<h2>Login</h2><div class='card'><form method=post><input name=phone placeholder='Phone'><br><input id='pass' name=password type=password placeholder='Password'> <button type='button' onclick='togglePass()'>👁️</button><br><button>Login</button></form></div>", None)
-
-import re
-from datetime import datetime
-
-def create_deposit_table():
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS deposit
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  user_id INTEGER,
-                  amount REAL,
-                  sms_text TEXT,
-                  status TEXT DEFAULT "approved",
-                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    conn.commit()
-    conn.close()
-
-create_deposit_table() # runs once when app starts
-
-@app.route('/deposit', methods=['GET', 'POST'])
-def deposit():
-    if 'uid' not in session:
-        return redirect('/login')
-        
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    
-    # Get current balance
-    c.execute("SELECT balance FROM user WHERE id =?", (session['uid'],))
-    row = c.fetchone()
-    balance = row[0] if row and row[0] else 0.0
-    success_amount = request.args.get('success')
-
     if request.method == 'POST':
-        sms = request.form['sms']
-        amount_input = float(request.form['amount'])
-        
-        # Auto-read amount from SMS
-        match = re.search(r'(\d[\d,]*)\s*UGX', sms, re.IGNORECASE)
-        amount = amount_input
-        if match:
-            amount = float(match.group(1).replace(',', ''))
+        u = request.form['username']; p = hash_password(request.form['password']); phone = request.form['phone']; code = str(uuid.uuid4())[:8].upper(); ref = request.form.get('refer_code','')
+        conn = get_db(); c = conn.cursor()
+        try: c.execute("INSERT INTO users(username,password,phone,refer_code,referred_by,created_at) VALUES(?,?,?,?,?,?)",(u,p,phone,code,ref,time.time())); session['uid'] = c.lastrowid
+        except: conn.close(); return page_wrap('<div class="card"><h3>Username taken</h3></div>', None, False)
+        if ref: c.execute("INSERT INTO referrals(referrer_code,referee_id,created_at) VALUES(?,?,?)",(ref,c.lastrowid,time.time()))
+        conn.commit(); conn.close(); return redirect('/dashboard')
+    return page_wrap(f'<div class="card"><h2>Register</h2><form method=post>Username: <input name=username required>Password: <input name=password required>Phone: <input name=phone required>Refer Code: <input name=refer_code placeholder="Optional"><button class="btn">Register</button></form><p><a href=/login>Login</a></p></div>', None, False)
 
-        # 1. Add to user balance
-        c.execute("UPDATE user SET balance = balance +? WHERE id =?", (amount, session['uid']))
-        
-        # 2. Save deposit record
-        c.execute("INSERT INTO deposit (user_id, amount, sms_text) VALUES (?,?,?)", 
-                  (session['uid'], amount, sms))
-        
+@app.route('/login', methods=['GET','POST'])
+def login():
+    if request.method == 'POST':
+        u = request.form['username']; p = hash_password(request.form['password'])
+        conn = get_db(); c = conn.cursor(); c.execute("SELECT id FROM users WHERE username=? AND password=?",(u,p)); user = c.fetchone(); conn.close()
+        if user: session['uid']=user['id']; return redirect('/dashboard')
+    return page_wrap('<div class="card"><h2>Login</h2><form method=post>Username: <input name=username required>Password: <input name=password required><button class="btn">Login</button></form></div>', None, False)
+
+@app.route('/dashboard')
+def dashboard():
+    u = get_user();
+    if not u: return redirect('/login')
+    return page_wrap(f'<h2>Welcome {u["username"]}</h2><div class="card"><h3>Balance: {format_number(u["balance"])} UGX</h3></div>', u)
+
+@app.route('/deposit', methods=['GET','POST'])
+def deposit():
+    u = get_user()
+    if request.method == 'POST':
+        try: entered_amount = float(request.form['amount'])
+        except: return page_wrap('<div class="card"><h3>Enter valid amount</h3></div>', u)
+        proof = request.form['proof']; data = scan_sms(proof); scanned_amount = data['amount']
+        if scanned_amount == 0: return page_wrap('<div class="card"><h3>Could not read amount from SMS</h3></div>', u)
+        if scanned_amount!= entered_amount: return page_wrap(f'<div class="card"><h3 style="color:red;">❌ Amount Mismatch!</h3></div>', u)
+        conn = get_db(); c = conn.cursor()
+        c.execute("SELECT * FROM deposit_numbers WHERE number=?",(data['number'],))
+        if not c.fetchone(): conn.close(); return page_wrap(f'<div class="card"><h3 style="color:red;">❌ Invalid Number!</h3></div>', u)
+        c.execute("UPDATE users SET balance = balance +? WHERE id=?",(scanned_amount,u['id']))
+        c.execute("INSERT INTO deposits(user_id,amount,network,proof,tx_id,sender_number,sender_name,deposit_date,status,created_at) VALUES(?,?,?,?,?,?)",
+                  (u['id'],scanned_amount,'Scanned',proof,data['tx_id'],data['number'],data['name'],data['date'],'approved',time.time()))
+        conn.commit(); conn.close()
+        return page_wrap(f'''<div class="success"><h3>✅ Deposit Approved!</h3><p>Amount: {format_number(scanned_amount)} UGX<br>TX ID: {data['tx_id']}</p></div><a href=/dashboard class="btn">Back</a>''', u)
+    conn = get_db(); c = conn.cursor(); c.execute("SELECT * FROM deposit_numbers"); numbers = c.fetchall(); conn.close()
+    numbers_html = ''.join([f'<div class="card"><b>{n["network"]}</b><br>{n["account_name"]}<br><span style="color:#ffcc00;">{n["number"]}</span></div>' for n in numbers])
+    return page_wrap(f'''<div class="card"><h2>Deposit Money</h2><div class="warning">1. Send money 2. Enter exact amount 3. Paste FULL SMS</div>{numbers_html}<form method=post>Amount: <input name=amount type=number required>SMS: <textarea name=proof rows=5 required></textarea><button class="btn" style="background:#00cc00;">Scan & Approve</button></form></div>''', u)
+
+@app.route('/withdraw', methods=['GET','POST'])
+def withdraw():
+    u = get_user()
+    if request.method == 'POST':
+        amount = float(request.form['amount']); phone = request.form['phone']; network = request.form['network']
+        if amount < 10000: return page_wrap('<div class="card"><h3>Min withdraw 10,000</h3></div>', u)
+        if u['balance'] < amount: return page_wrap('<div class="card"><h3>No Balance</h3></div>', u)
+        to_send = amount * (1 - WITHDRAW_TAX)
+        conn = get_db(); c = conn.cursor()
+        c.execute("UPDATE users SET balance = balance -? WHERE id=?",(amount,u['id']))
+        c.execute("INSERT INTO withdraws(user_id,amount_requested,amount_to_send,phone,network,status,created_at) VALUES(?,?,?,?,?,?,?)",(u['id'],amount,to_send,phone,network,'pending',time.time()))
+        conn.commit(); conn.close()
+        return page_wrap(f'<div class="success"><h3>Withdraw Requested</h3><p>Requested: {format_number(amount)}<br>You will receive: {format_number(to_send)} after tax</p></div>', u)
+    return page_wrap(f'''<div class="card"><h2>Withdraw Money</h2><div class="warning">8% Tax. Auto-approved in 24 hours</div><form method=post>Amount: <input name=amount type=number required>Network: <select name=network><option>MTN Mobile Money</option><option>Airtel Money</option></select>Phone: <input name=phone required><button class="btn">Withdraw</button></form></div>''', u)
+
+@app.route('/machines')
+def machines_page():
+    u = get_user(); conn = get_db(); c = conn.cursor(); c.execute("SELECT * FROM machines ORDER BY is_vip DESC, price ASC"); machines = c.fetchall(); conn.close()
+    html = ''
+    for m in machines:
+        total = m['price'] + (m['profit']*m['days'])
+        vip_badge = '<span style="color:gold;">👑 VIP</span>' if m['is_vip']==1 else ''
+        if m['stock'] <= 0: btn = '<button class="btn soldout" disabled>SOLD OUT</button>'
+        else: btn = f'<form method=post action=/buy><input type=hidden name=m_id value={m["id"]}><button class="btn">Buy</button></form>'
+        html += f'<div class="card"><h4>{m["name"]} {vip_badge}</h4><p>Price: {format_number(m["price"])}<br>Daily: {format_number(m["profit"])}<br>Days: {m["days"]}<br>Stock: {m["stock"]}<br><span class="total-return">Total Return: {format_number(total)} UGX</span></p>{btn}</div>'
+    return page_wrap(f'<h2>All Machines</h2>{html}', u)
+
+@app.route('/buy', methods=['POST'])
+def buy():
+    u = get_user(); m_id = int(request.form['m_id']); conn = get_db(); c = conn.cursor(); c.execute("SELECT * FROM machines WHERE id=?",(m_id,)); m = c.fetchone()
+    if m['stock'] <= 0: conn.close(); return page_wrap('<div class="card"><h3>SOLD OUT</h3></div>', u)
+    if u['balance'] < m['price']: conn.close(); return page_wrap('<div class="card"><h3>No Balance</h3></div>', u)
+    c.execute("UPDATE users SET balance = balance -? +? WHERE id=?",(m['price'],BUY_REWARD,u['id']))
+    c.execute("UPDATE machines SET stock = stock -1 WHERE id=?",(m_id,))
+    c.execute("INSERT INTO user_machines(user_id,machine_id,bought_at,days_left,daily_profit,last_paid,total_earned) VALUES(?,?,?,?,?,?,?)",(u['id'],m_id,time.time(),m['days'],m['profit'],time.time(),0))
+    c.execute("SELECT * FROM referrals WHERE referee_id=? AND has_bought=0",(u['id'],))
+    ref = c.fetchone()
+    if ref: c.execute("UPDATE users SET balance = balance +? WHERE refer_code=?",(REFER_REWARD,ref['referrer_code'])); c.execute("UPDATE referrals SET has_bought=1 WHERE id=?",(ref['id'],))
+    conn.commit(); conn.close(); return redirect('/my_machines')
+
+@app.route('/my_machines')
+def my_machines():
+    u = get_user(); conn = get_db(); c = conn.cursor()
+    c.execute("SELECT um.*,m.name FROM user_machines um JOIN machines m ON um.machine_id=m.id WHERE um.user_id=?",(u['id'],))
+    machines = c.fetchall(); conn.close()
+    rows = ''
+    for m in machines:
+        left = m['bought_at'] + (m['days_left']*86400) - time.time()
+        rows += f'<div class="card"><h4>{m["name"]}</h4><p>Daily: {format_number(m["daily_profit"])}<br>Time Left: {time_left(left)}<br>Total Earned: {format_number(m["total_earned"])} UGX</p></div>'
+    return page_wrap(f'<h2>My Machines</h2>{rows if rows else "<div class=card>No machines</div>"}', u)
+
+@app.route('/chat', methods=['GET','POST'])
+def chat():
+    u = get_user()
+    if request.method == 'POST':
+        msg = request.form['message']; conn = get_db(); c = conn.cursor()
+        sender = 'admin' if u['is_admin']==1 else 'user'
+        c.execute("INSERT INTO chats(user_id,sender,message,created_at) VALUES(?,?,?,?)",(u['id'],sender,msg,time.time())); conn.commit(); conn.close(); return redirect('/chat')
+    conn = get_db(); c = conn.cursor(); c.execute("SELECT * FROM chats WHERE user_id=? ORDER BY created_at ASC",(u['id'],)); chats = c.fetchall(); conn.close()
+    chat_html = ''.join([f'<div class="card"><b>{c["sender"]}</b>: {c["message"]}</div>' for c in chats])
+    return page_wrap(f'<h2>Support Chat</h2>{chat_html}<form method=post><input name=message placeholder="Type message..." required><button class="btn">Send</button></form>', u)
+
+@app.route('/refer')
+def refer():
+    u = get_user(); return page_wrap(f'<div class="card"><h2>Refer & Earn</h2><p>Get {format_number(REFER_REWARD)} UGX when your friend buys a machine</p><p>Your Code: <b>{u["refer_code"]}</b></p></div>', u)
+
+@app.route('/notifications', methods=['GET','POST'])
+def notifications():
+    u = get_user()
+    if request.method == 'POST' and u['is_admin']==1:
+        msg = request.form['message']; conn = get_db(); c = conn.cursor(); c.execute("INSERT INTO notifications(message,created_at) VALUES(?,?)",(msg,time.time())); conn.commit(); conn.close(); return redirect('/notifications')
+    conn = get_db(); c = conn.cursor(); c.execute("SELECT * FROM notifications ORDER BY created_at DESC"); notifs = c.fetchall(); conn.close()
+    notif_html = ''.join([f'<div class="card">{n["message"]}</div>' for n in notifs])
+    admin_form = '<div class="card"><h3>Post Update</h3><form method=post><textarea name=message required></textarea><button class="btn">Post</button></form></div>' if u['is_admin']==1 else ''
+    return page_wrap(f'<h2>Notifications</h2>{admin_form}{notif_html}', u)
+
+@app.route('/admin', methods=['GET','POST'])
+def admin():
+    u = get_user();
+    if not u or u['is_admin']!=1: return "Access Denied"
+    conn = get_db(); c = conn.cursor()
+    if request.method == 'POST':
+        if 'add_number' in request.form: c.execute("INSERT INTO deposit_numbers(network,account_name,number) VALUES(?,?,?)",(request.form['network'],request.form['acc_name'],request.form['number']))
+        if 'remove_number' in request.form: c.execute("DELETE FROM deposit_numbers WHERE id=?",(request.form['remove_number'],))
+        if 'add_admin' in request.form: c.execute("INSERT INTO users(username,password,is_admin,created_at) VALUES(?,?,?,?)",(request.form['new_user'],hash_password(request.form['new_pass']),1,time.time()))
+        if 'add_machine' in request.form: c.execute("INSERT INTO machines(name,price,profit,days,stock,is_vip) VALUES(?,?,?,?,?,?)",(request.form['m_name'],request.form['m_price'],request.form['m_profit'],request.form['m_days'],request.form['m_stock'],request.form['m_vip']))
+        if 'approve_w' in request.form: c.execute("UPDATE withdraws SET status='approved', approved_at=? WHERE id=?",(time.time(),request.form['approve_w']))
         conn.commit()
-        conn.close()
-        
-        return redirect('/deposit?success=' + str(amount))
-    
-    conn.close()
-    return render_template('deposit.html', balance=balance, success=float(success_amount) if success_amount else None)
 
-if __name__=="__main__": app.run(debug=True)
+    c.execute("SELECT COUNT(*) FROM users"); total_users = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM user_machines"); total_purchases = c.fetchone()[0]
+    c.execute("SELECT SUM(amount) FROM deposits WHERE status='approved'"); total_deposits = c.fetchone()[0] or 0
+    c.execute("SELECT d.*,u.username FROM deposits d JOIN users u ON d.user_id=u.id ORDER BY d.created_at DESC LIMIT 50"); deposits = c.fetchall()
+    c.execute("SELECT w.*,u.username FROM withdraws w JOIN users u ON w.user_id=u.id ORDER BY w.created_at DESC"); withdraws = c.fetchall()
+    c.execute("SELECT * FROM deposit_numbers"); numbers = c.fetchall()
+    c.execute("SELECT * FROM machines ORDER BY id DESC"); machines = c.fetchall()
+    c.execute("SELECT * FROM chats ORDER BY created_at DESC LIMIT 50"); all_chats = c.fetchall()
+    conn.close()
+
+    dep_rows = ''.join([f'<tr><td>{d["username"]}</td><td>{format_number(d["amount"])}</td><td>{d["tx_id"]}</td><td>{d["sender_name"]}</td><td>{d["deposit_date"]}</td></tr>' for d in deposits])
+    w_rows = ''.join([f'<tr><td>{w["username"]}</td><td>{format_number(w["amount_requested"])}</td><td>{w["phone"]}</td><td>{w["status"]}</td><td>{"<form method=post><button name=approve_w value="+str(w["id"])+">Approve</button></form>" if w["status"]=="pending" else "Approved"}</td></tr>' for w in withdraws])
+    m_rows = ''.join([f'<tr><td>{m["name"]}</td><td>{format_number(m["price"])}</td><td>{m["stock"]}</td><td>{"VIP" if m["is_vip"] else "REG"}</td></tr>' for m in machines])
+    num_rows = ''.join([f'<tr><td>{n["network"]}</td><td>{n["account_name"]}</td><td>{n["number"]}</td><td><form method=post><button name=remove_number value={n["id"]}>Remove</button></form></td></tr>' for n in numbers])
+
+    content = f'''<h2>Admin Panel</h2>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
+    <div class="card"><h3>{total_users}</h3><p>Total Users</p></div>
+    <div class="card"><h3>{total_purchases}</h3><p>Machines Bought</p></div>
+    <div class="card"><h3>{format_number(total_deposits)}</h3><p>Total Deposits</p></div>
+    </div>
+
+    <div class="card"><h3>Add Admin</h3><form method=post>Username: <input name=new_user>Password: <input name=new_pass><button name=add_admin class="btn">Add Admin</button></form></div>
+
+    <div class="card"><h3>Add Machine</h3><form method=post>Name: <input name=m_name required>Price: <input name=m_price type=number required>Daily Profit: <input name=m_profit type=number required>Days: <input name=m_days type=number required>Stock: <input name=m_stock type=number required>VIP: <select name=m_vip><option value=0>Regular</option><option value=1>VIP</option></select><button name=add_machine class="btn">Add Machine</button></form></div>
+
+    <div class="card"><h3>Deposit Numbers</h3><form method=post>Network: <select name=network><option>MTN Mobile Money</option><option>Airtel Money</option></select>Account: <input name=acc_name>Number: <input name=number><button name=add_number class="btn">Add</button></form><table><tr><th>Network</th><th>Account</th><th>Number</th><th>Action</th></tr>{num_rows}</table></div>
+
+    <div class="card"><h3>All Machines</h3><table><tr><th>Name</th><th>Price</th><th>Stock</th><th>Type</th></tr>{m_rows}</table></div>
+
+    <div class="card"><h3>Last 50 Deposits</h3><table><tr><th>User</th><th>Amount</th><th>TX ID</th><th>Name</th><th>Date</th></tr>{dep_rows}</table></div>
+
+    <div class="card"><h3>Withdraw Requests</h3><table><tr><th>User</th><th>Amount</th><th>Phone</th><th>Status</th><th>Action</th></tr>{w_rows}</table></div>'''
+    return page_wrap(content, u)
+
+if __name__ == '__main__': app.run(debug=False, host='0.0.0.0', port=5000)
