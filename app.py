@@ -447,5 +447,29 @@ with app.app_context():
     if not User.query.filter_by(phone='0792759363').first():
         admin = User(phone='0792759363', password=generate_password_hash('1831'), is_admin=True, balance=50000000, referral_code='ADMIN001')
         db.session.add(admin); db.session.commit()
+@app.route('/my_machines')
+
+def my_machines():
+    user = get_user()
+    if not user: return redirect('/login')
+    
+    user_machines = []
+    for um in user.machines:
+        if um.machine: # safety check
+            user_machines.append({
+                'name': um.machine.name, 
+                'image': um.machine.image, 
+                'daily': um.machine.daily, 
+                'days_left': um.days_left,
+                'series': um.machine.series.name
+            })
+    
+    if user_machines:
+        cards = ''.join([f'<div class="card"><img src="/static/uploads/{m["image"]}" style="width:100%;height:180px;object-fit:cover;border-radius:10px"><h3 style="font-size:18px">{m["name"]}</h3><p style="font-size:16px">Series: {m["series"]}</p><p style="font-size:16px">Daily: UGX {m["daily"]}</p><p style="font-size:16px">Days Left: {m["days_left"]}</p></div>' for m in user_machines])
+    else:
+        cards = '<div class="card"><p style="font-size:16px">You have no machines yet. Go to Shop to buy one.</p></div>'
+    
+    content = f'<h2 style="font-size:24px">My Machines</h2>{cards}'
+    return base_template(content, user)
 
 if __name__ == '__main__': app.run(debug=True, host='0.0.0.0', port=5000)
