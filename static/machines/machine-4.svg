@@ -1,0 +1,29 @@
+
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="900"
+     height="600"
+     viewBox="0 0 900 600">
+<defs>
+ <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+   <stop offset="0%" stop-color="#b8c2cc"/>
+   <stop offset="100%" stop-color="#38434d"/>
+ </linearGradient>
+</defs>
+<rect width="900" height="600" rx="35" fill="url(#bg)"/>
+<rect x="160" y="150" width="580" height="270"
+      rx="35" fill="#071f18" opacity=".9"/>
+<circle cx="290" cy="285" r="70"
+        fill="#16a866"/>
+<circle cx="610" cy="285" r="70"
+        fill="#16a866"/>
+<rect x="260" y="225" width="380" height="120"
+      rx="20" fill="#0d6d4a"/>
+<path d="M340 225 L390 165 L510 165 L560 225"
+      fill="#0d6d4a"/>
+<text x="450" y="395"
+      text-anchor="middle"
+      font-family="Arial"
+      font-size="42"
+      font-weight="bold"
+      fill="white">Titanium Machine</text>
+</svg>

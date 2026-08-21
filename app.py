@@ -1,10 +1,7 @@
 import os
-import re
-import sqlite3
-import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from pathlib import Path
 
 from flask import (
     Flask,
@@ -16,300 +13,587 @@ from flask import (
     render_template_string,
     send_from_directory,
 )
+from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 
 
 # ============================================================
-# DATA4MINES - COMPLETE SINGLE-FILE FLASK APPLICATION
-# ============================================================
-#
-# Required packages:
-#   Flask
-#   Werkzeug
-#   gunicorn
-#
-# Render start command:
-#   gunicorn app:app
-#
-# Project structure:
-#
-#   app.py
-#   static/
-#       machines/
-#           bg.jpg
-#           m1.jpg
-#           m2.jpg
-#           m3.jpg
-#           m4.jpg
-#           m5.jpg
-#           m6.jpg
-#           m7.jpg
-#           m8.jpg
-#           m9.jpg
-#           m10.jpg
-#           m11.jpg
-#
-# This version fixes the previous Python syntax problem caused by
-# JavaScript being outside a Python string.
-#
-# Features:
-# - Login / registration
-# - Primary admin
-# - Additional admins
-# - Admin-only button/panel
-# - Shop
-# - Machines
-# - Machine images
-# - Background machine image
-# - Machine countdown
-# - Receive Money after completion
-# - Machine purchase reward
-# - Referral system
-# - 5,000 UGX referral reward
-# - Manual deposits
-# - Admin deposit approval
-# - Manual withdrawals
-# - Admin withdrawal approval
-# - 7% withdrawal tax
-# - Tax shown on withdrawal page
-# - Notifications
-# - User-to-admin chat
-# - Admin-to-user replies
-# - Deposit-number management
-# - Machine management
-# - Admin statistics
-# - Deposit/withdraw/growth chart
-# - Mobile 16px layout
-# - Custom 404/500 pages
-# - /health endpoint
-# - Old SQLite database migration
-#
-# IMPORTANT:
-# This code does NOT connect to a mobile-money/bank API.
-# Deposits and withdrawals remain manual and require admin approval.
-# For production handling of real customer funds, use the appropriate
-# licensing, KYC/AML, accounting, security, audit, payment-provider,
-# HTTPS and persistent database requirements for your jurisdiction.
+# DATA4MINE - SINGLE FILE FLASK APPLICATION
 # ============================================================
 
+app = Flask(__name__)
 
-# ============================================================
-# PATHS
-# ============================================================
+# ------------------------------------------------------------
+# Basic configuration
+# ------------------------------------------------------------
 
-BASE_DIR = Path(__file__).resolve().parent
-
-STATIC_DIR = BASE_DIR / "static"
-MACHINE_DIR = STATIC_DIR / "machines"
-
-STATIC_DIR.mkdir(parents=True, exist_ok=True)
-MACHINE_DIR.mkdir(parents=True, exist_ok=True)
-
-
-# ============================================================
-# FLASK
-# ============================================================
-
-app = Flask(
-    __name__,
-    static_folder=str(STATIC_DIR),
-    static_url_path="/static",
-)
-
-app.secret_key = os.getenv(
+app.config["SECRET_KEY"] = os.environ.get(
     "SECRET_KEY",
-    "CHANGE_THIS_SECRET_KEY_BEFORE_PRODUCTION",
+    "DATA4MINE_CHANGE_THIS_SECRET_KEY_2026"
 )
+
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+MACHINE_DIR = os.path.join(STATIC_DIR, "machines")
+BACKGROUND_DIR = os.path.join(STATIC_DIR, "background")
+
+os.makedirs(STATIC_DIR, exist_ok=True)
+os.makedirs(MACHINE_DIR, exist_ok=True)
+os.makedirs(BACKGROUND_DIR, exist_ok=True)
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+
+if DATABASE_URL:
+    # Render sometimes provides postgres://
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace(
+            "postgres://",
+            "postgresql://",
+            1
+        )
+
+    app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+else:
+    app.config["SQLALCHEMY_DATABASE_URI"] = (
+        "sqlite:///" + os.path.join(BASE_DIR, "data4mine.db")
+    )
+
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
+
+db = SQLAlchemy(app)
 
 
 # ============================================================
-# SETTINGS
+# CONSTANTS
 # ============================================================
 
-ADMIN_PHONE = os.getenv(
-    "ADMIN_PHONE",
-    "0792759363",
-)
-
-ADMIN_PASSWORD = os.getenv(
-    "ADMIN_PASSWORD",
-    "twix1831",
-)
-
-COMPANY_NAME = "DATA4MINES"
-
-DEPOSIT_OWNER = "Nuwahereza Christine"
-
-REFERRAL_REWARD = 5000
+ADMIN_PHONE = "0792759363"
+ADMIN_PASSWORD = "1831"
 
 WITHDRAW_TAX_RATE = 0.07
+WITHDRAW_WAIT_HOURS = 24
+REFERRAL_REWARD = 5000
 
-DB_PATH = BASE_DIR / "data4mines.db"
-
-
-# ============================================================
-# DEFAULT MACHINES
-# ============================================================
-
-DEFAULT_MACHINES = [
-    (
-        "M1",
-        "DATA4MINES Starter",
-        50000,
-        60000,
-        10,
-        1000,
-        "m1.jpg",
-    ),
-    (
-        "M2",
-        "DATA4MINES Bronze",
-        100000,
-        125000,
-        15,
-        2500,
-        "m2.jpg",
-    ),
-    (
-        "M3",
-        "DATA4MINES Silver",
-        250000,
-        325000,
-        20,
-        6000,
-        "m3.jpg",
-    ),
-    (
-        "M4",
-        "DATA4MINES Gold",
-        500000,
-        700000,
-        25,
-        12000,
-        "m4.jpg",
-    ),
-    (
-        "M5",
-        "DATA4MINES Platinum",
-        1000000,
-        1500000,
-        30,
-        25000,
-        "m5.jpg",
-    ),
-    (
-        "M6",
-        "DATA4MINES Diamond",
-        2000000,
-        3200000,
-        35,
-        55000,
-        "m6.jpg",
-    ),
-    (
-        "M7",
-        "DATA4MINES Elite",
-        5000000,
-        8500000,
-        40,
-        120000,
-        "m7.jpg",
-    ),
-    (
-        "M8",
-        "DATA4MINES Pro",
-        10000000,
-        18000000,
-        45,
-        250000,
-        "m8.jpg",
-    ),
-    (
-        "M9",
-        "DATA4MINES Ultra",
-        20000000,
-        38000000,
-        50,
-        500000,
-        "m9.jpg",
-    ),
-    (
-        "M10",
-        "DATA4MINES Max",
-        50000000,
-        100000000,
-        60,
-        1000000,
-        "m10.jpg",
-    ),
-    (
-        "M11",
-        "DATA4MINES Titan",
-        100000000,
-        220000000,
-        75,
-        2500000,
-        "m11.jpg",
-    ),
-]
+ALLOWED_IMAGE_EXTENSIONS = {
+    "png",
+    "jpg",
+    "jpeg",
+    "webp",
+    "gif"
+}
 
 
 # ============================================================
-# DATABASE
+# TIME HELPERS
 # ============================================================
 
-def db():
-    connection = sqlite3.connect(DB_PATH)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    return connection
+def utc_now():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def now():
-    return datetime.now(timezone.utc).replace(
-        microsecond=0
-    ).isoformat()
+def make_aware(dt):
+    if dt is None:
+        return None
+
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+
+    return dt
 
 
-def parse_dt(value):
-    return datetime.fromisoformat(value)
+def format_money(value):
+    try:
+        return f"UGX {float(value):,.0f}"
+    except Exception:
+        return "UGX 0"
 
 
-def money(value):
-    return f"{int(value):,} UGX"
+def allowed_image(filename):
+    if not filename:
+        return False
+
+    if "." not in filename:
+        return False
+
+    ext = filename.rsplit(".", 1)[1].lower()
+
+    return ext in ALLOWED_IMAGE_EXTENSIONS
 
 
-def normalize_phone(value):
-    return re.sub(
-        r"[^0-9+]",
-        "",
-        value or "",
+# ============================================================
+# DATABASE MODELS
+# ============================================================
+
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+
+    phone = db.Column(db.String(30), unique=True, nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+
+    balance = db.Column(db.Float, default=0.0, nullable=False)
+
+    referral_code = db.Column(
+        db.String(50),
+        unique=True,
+        nullable=False
+    )
+
+    referred_by = db.Column(db.Integer, nullable=True)
+
+    is_admin = db.Column(db.Boolean, default=False)
+    is_active = db.Column(db.Boolean, default=True)
+
+    created_at = db.Column(
+        db.DateTime,
+        default=utc_now
+    )
+
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(
+            self.password_hash,
+            password
+        )
+
+
+class Machine(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+
+    name = db.Column(db.String(150), nullable=False)
+
+    description = db.Column(
+        db.Text,
+        default=""
+    )
+
+    price = db.Column(db.Float, nullable=False)
+
+    daily_profit = db.Column(
+        db.Float,
+        nullable=False,
+        default=0
+    )
+
+    duration_days = db.Column(
+        db.Integer,
+        nullable=False,
+        default=20
+    )
+
+    stock = db.Column(
+        db.Integer,
+        nullable=False,
+        default=0
+    )
+
+    image_filename = db.Column(
+        db.String(255),
+        nullable=True
+    )
+
+    active = db.Column(
+        db.Boolean,
+        default=True
+    )
+
+    created_at = db.Column(
+        db.DateTime,
+        default=utc_now
+    )
+
+    @property
+    def total_profit(self):
+        return self.daily_profit * self.duration_days
+
+    @property
+    def total_return(self):
+        return self.price + self.total_profit
+
+
+class UserMachine(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("user.id"),
+        nullable=False
+    )
+
+    machine_id = db.Column(
+        db.Integer,
+        db.ForeignKey("machine.id"),
+        nullable=False
+    )
+
+    purchase_price = db.Column(
+        db.Float,
+        nullable=False
+    )
+
+    daily_profit = db.Column(
+        db.Float,
+        nullable=False
+    )
+
+    duration_days = db.Column(
+        db.Integer,
+        nullable=False
+    )
+
+    purchased_at = db.Column(
+        db.DateTime,
+        default=utc_now,
+        nullable=False
+    )
+
+    completed_at = db.Column(
+        db.DateTime,
+        nullable=True
+    )
+
+    received_at = db.Column(
+        db.DateTime,
+        nullable=True
+    )
+
+    reward_received = db.Column(
+        db.Boolean,
+        default=False
+    )
+
+    user = db.relationship(
+        "User",
+        backref=db.backref(
+            "machines",
+            lazy=True
+        )
+    )
+
+    machine = db.relationship(
+        "Machine",
+        backref=db.backref(
+            "purchases",
+            lazy=True
+        )
+    )
+
+    @property
+    def finish_time(self):
+        return self.purchased_at + timedelta(
+            days=self.duration_days
+        )
+
+    @property
+    def is_complete(self):
+        return utc_now() >= self.finish_time
+
+    @property
+    def days_completed(self):
+        elapsed = utc_now() - self.purchased_at
+
+        seconds = max(
+            0,
+            elapsed.total_seconds()
+        )
+
+        completed = int(
+            seconds // 86400
+        )
+
+        return min(
+            completed,
+            self.duration_days
+        )
+
+    @property
+    def progress_text(self):
+        return (
+            str(self.days_completed)
+            + "/"
+            + str(self.duration_days)
+            + " days"
+        )
+
+    @property
+    def seconds_remaining(self):
+        remaining = (
+            self.finish_time - utc_now()
+        ).total_seconds()
+
+        return max(
+            0,
+            int(remaining)
+        )
+
+    @property
+    def total_profit(self):
+        return (
+            self.daily_profit
+            * self.duration_days
+        )
+
+
+class Deposit(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("user.id"),
+        nullable=False
+    )
+
+    amount = db.Column(
+        db.Float,
+        nullable=False
+    )
+
+    deposit_number = db.Column(
+        db.String(100),
+        nullable=False
+    )
+
+    transaction_message = db.Column(
+        db.Text,
+        nullable=False
+    )
+
+    status = db.Column(
+        db.String(30),
+        default="pending"
+    )
+
+    admin_note = db.Column(
+        db.Text,
+        default=""
+    )
+
+    created_at = db.Column(
+        db.DateTime,
+        default=utc_now
+    )
+
+    processed_at = db.Column(
+        db.DateTime,
+        nullable=True
+    )
+
+    user = db.relationship(
+        "User",
+        backref=db.backref(
+            "deposits",
+            lazy=True
+        )
     )
 
 
-def make_referral_code():
-    return (
-        "D4M-"
-        + secrets.token_hex(4).upper()
+class Withdrawal(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("user.id"),
+        nullable=False
+    )
+
+    amount = db.Column(
+        db.Float,
+        nullable=False
+    )
+
+    tax = db.Column(
+        db.Float,
+        nullable=False
+    )
+
+    net_amount = db.Column(
+        db.Float,
+        nullable=False
+    )
+
+    account_name = db.Column(
+        db.String(150),
+        nullable=False
+    )
+
+    account_number = db.Column(
+        db.String(100),
+        nullable=False
+    )
+
+    status = db.Column(
+        db.String(30),
+        default="pending"
+    )
+
+    created_at = db.Column(
+        db.DateTime,
+        default=utc_now
+    )
+
+    processed_at = db.Column(
+        db.DateTime,
+        nullable=True
+    )
+
+    admin_note = db.Column(
+        db.Text,
+        default=""
+    )
+
+    user = db.relationship(
+        "User",
+        backref=db.backref(
+            "withdrawals",
+            lazy=True
+        )
+    )
+
+    @property
+    def available_at(self):
+        return self.created_at + timedelta(
+            hours=WITHDRAW_WAIT_HOURS
+        )
+
+    @property
+    def seconds_remaining(self):
+        seconds = (
+            self.available_at - utc_now()
+        ).total_seconds()
+
+        return max(
+            0,
+            int(seconds)
+        )
+
+
+class DepositNumber(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+
+    number = db.Column(
+        db.String(100),
+        nullable=False
+    )
+
+    owner_name = db.Column(
+        db.String(150),
+        default=""
+    )
+
+    active = db.Column(
+        db.Boolean,
+        default=True
+    )
+
+    created_at = db.Column(
+        db.DateTime,
+        default=utc_now
     )
 
 
-def buyer_reward(machine):
-    """
-    Buyer reward scales with machine amount.
-    The machine's configured reward is the minimum.
-    """
-    configured = int(
-        machine["buyer_reward"]
+class Notification(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+
+    title = db.Column(
+        db.String(200),
+        nullable=False
     )
 
-    scaled = int(
-        int(machine["purchase_amount"]) * 0.02
+    message = db.Column(
+        db.Text,
+        nullable=False
     )
 
-    return max(
-        configured,
-        scaled,
+    active = db.Column(
+        db.Boolean,
+        default=True
+    )
+
+    created_at = db.Column(
+        db.DateTime,
+        default=utc_now
+    )
+
+
+class NotificationRead(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+
+    notification_id = db.Column(
+        db.Integer,
+        db.ForeignKey("notification.id"),
+        nullable=False
+    )
+
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("user.id"),
+        nullable=False
+    )
+
+    read_at = db.Column(
+        db.DateTime,
+        default=utc_now
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "notification_id",
+            "user_id",
+            name="unique_notification_user"
+        ),
+    )
+
+
+class ChatMessage(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("user.id"),
+        nullable=False
+    )
+
+    sender = db.Column(
+        db.String(20),
+        nullable=False
+    )
+
+    message = db.Column(
+        db.Text,
+        nullable=False
+    )
+
+    created_at = db.Column(
+        db.DateTime,
+        default=utc_now
+    )
+
+    user = db.relationship(
+        "User",
+        backref=db.backref(
+            "chat_messages",
+            lazy=True
+        )
+    )
+
+
+class SiteSetting(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+
+    key = db.Column(
+        db.String(100),
+        unique=True,
+        nullable=False
+    )
+
+    value = db.Column(
+        db.Text,
+        default=""
     )
 
 
@@ -317,319 +601,153 @@ def buyer_reward(machine):
 # DATABASE INITIALIZATION
 # ============================================================
 
-def init_db():
+def initialize_database():
+    db.create_all()
 
-    connection = db()
-
-    connection.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            phone TEXT UNIQUE NOT NULL,
-            name TEXT NOT NULL,
-            password_hash TEXT NOT NULL,
-            referral_code TEXT UNIQUE NOT NULL,
-            referred_by TEXT,
-            referral_reward_paid INTEGER NOT NULL DEFAULT 0,
-            balance INTEGER NOT NULL DEFAULT 0,
-            total_deposited INTEGER NOT NULL DEFAULT 0,
-            total_withdrawn INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            is_admin INTEGER NOT NULL DEFAULT 0
-        );
-
-        CREATE TABLE IF NOT EXISTS machines (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            code TEXT UNIQUE NOT NULL,
-            name TEXT NOT NULL,
-            purchase_amount INTEGER NOT NULL,
-            payout_amount INTEGER NOT NULL,
-            days INTEGER NOT NULL,
-            buyer_reward INTEGER NOT NULL DEFAULT 0,
-            image TEXT NOT NULL DEFAULT 'm1.jpg',
-            active INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS user_machines (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            machine_id INTEGER NOT NULL,
-            purchased_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL,
-            reward_paid INTEGER NOT NULL DEFAULT 0,
-            received INTEGER NOT NULL DEFAULT 0,
-
-            FOREIGN KEY(user_id)
-                REFERENCES users(id)
-                ON DELETE CASCADE,
-
-            FOREIGN KEY(machine_id)
-                REFERENCES machines(id)
-                ON DELETE RESTRICT
-        );
-
-        CREATE TABLE IF NOT EXISTS deposits (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            amount INTEGER NOT NULL,
-            account_number TEXT NOT NULL,
-            reference TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'pending',
-            created_at TEXT NOT NULL,
-            approved_at TEXT,
-
-            FOREIGN KEY(user_id)
-                REFERENCES users(id)
-                ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS withdrawals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            amount INTEGER NOT NULL,
-            tax INTEGER NOT NULL,
-            net_amount INTEGER NOT NULL,
-            phone TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'pending',
-            created_at TEXT NOT NULL,
-            approved_at TEXT,
-
-            FOREIGN KEY(user_id)
-                REFERENCES users(id)
-                ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS deposit_numbers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            number TEXT UNIQUE NOT NULL,
-            owner_name TEXT NOT NULL,
-            active INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS notifications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            message TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS chats (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            message TEXT NOT NULL,
-            from_admin INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-
-            FOREIGN KEY(user_id)
-                REFERENCES users(id)
-                ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-        """
-    )
-
-    # ========================================================
-    # CREATE PRIMARY ADMIN
-    # ========================================================
-
-    admin = connection.execute(
-        """
-        SELECT id
-        FROM users
-        WHERE phone = ?
-        """,
-        (ADMIN_PHONE,),
-    ).fetchone()
+    # --------------------------------------------------------
+    # Create main administrator automatically
+    # --------------------------------------------------------
+    admin = User.query.filter_by(
+        phone=ADMIN_PHONE
+    ).first()
 
     if admin is None:
-
-        connection.execute(
-            """
-            INSERT INTO users (
-                phone,
-                name,
-                password_hash,
-                referral_code,
-                referred_by,
-                referral_reward_paid,
-                balance,
-                created_at,
-                is_admin
-            )
-            VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, 1
-            )
-            """,
-            (
-                ADMIN_PHONE,
-                "Primary Admin",
-                generate_password_hash(
-                    ADMIN_PASSWORD
-                ),
-                "ADMIN",
-                None,
-                0,
-                0,
-                now(),
-            ),
+        admin = User(
+            phone=ADMIN_PHONE,
+            referral_code="ADMIN",
+            is_admin=True,
+            is_active=True,
+            balance=0
         )
 
+        admin.set_password(
+            ADMIN_PASSWORD
+        )
+
+        db.session.add(admin)
+        db.session.commit()
     else:
+        # Keep requested administrator credentials usable.
+        if not admin.is_admin:
+            admin.is_admin = True
 
-        connection.execute(
-            """
-            UPDATE users
-            SET is_admin = 1
-            WHERE phone = ?
-            """,
-            (ADMIN_PHONE,),
+        admin.set_password(
+            ADMIN_PASSWORD
         )
 
-    # ========================================================
-    # CREATE DEFAULT MACHINES
-    # ========================================================
+        db.session.commit()
 
-    for machine in DEFAULT_MACHINES:
+    # --------------------------------------------------------
+    # Default deposit number
+    # --------------------------------------------------------
+    if DepositNumber.query.count() == 0:
+        default_number = DepositNumber(
+            number="0792759363",
+            owner_name="DATA4MINE",
+            active=True
+        )
 
-        connection.execute(
-            """
-            INSERT OR IGNORE INTO machines (
-                code,
-                name,
-                purchase_amount,
-                payout_amount,
-                days,
-                buyer_reward,
-                image,
-                active,
-                created_at
-            )
-            VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?
-            )
-            """,
-            (
-                machine[0],
-                machine[1],
-                machine[2],
-                machine[3],
-                machine[4],
-                machine[5],
-                machine[6],
-                1,
-                now(),
+        db.session.add(
+            default_number
+        )
+
+    # --------------------------------------------------------
+    # Default machines
+    # --------------------------------------------------------
+    if Machine.query.count() == 0:
+
+        machines = [
+            Machine(
+                name="Diamond Miner",
+                description=(
+                    "Diamond mining machine with "
+                    "20-day earning cycle."
+                ),
+                price=50000,
+                daily_profit=3500,
+                duration_days=20,
+                stock=50,
+                image_filename="diamond.jpg",
+                active=True
             ),
-        )
 
-    # ========================================================
-    # CREATE DEFAULT DEPOSIT NUMBER
-    # ========================================================
-
-    deposit_count = connection.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM deposit_numbers
-        """
-    ).fetchone()["total"]
-
-    if deposit_count == 0:
-
-        connection.execute(
-            """
-            INSERT INTO deposit_numbers (
-                number,
-                owner_name,
-                active,
-                created_at
-            )
-            VALUES (?, ?, 1, ?)
-            """,
-            (
-                ADMIN_PHONE,
-                DEPOSIT_OWNER,
-                now(),
+            Machine(
+                name="Gold Miner",
+                description=(
+                    "Gold mining machine with "
+                    "20-day earning cycle."
+                ),
+                price=100000,
+                daily_profit=7500,
+                duration_days=20,
+                stock=30,
+                image_filename="gold.jpg",
+                active=True
             ),
+
+            Machine(
+                name="Platinum Miner",
+                description=(
+                    "Platinum machine with "
+                    "20-day earning cycle."
+                ),
+                price=200000,
+                daily_profit=16000,
+                duration_days=20,
+                stock=20,
+                image_filename="platinum.jpg",
+                active=True
+            ),
+
+            Machine(
+                name="Titanium Miner",
+                description=(
+                    "Titanium machine with "
+                    "20-day earning cycle."
+                ),
+                price=500000,
+                daily_profit=42000,
+                duration_days=20,
+                stock=10,
+                image_filename="titanium.jpg",
+                active=True
+            )
+        ]
+
+        db.session.add_all(
+            machines
         )
 
-    # ========================================================
-    # MIGRATE OLD DATABASES
-    # ========================================================
+    # --------------------------------------------------------
+    # Default notification
+    # --------------------------------------------------------
+    if Notification.query.count() == 0:
+        notification = Notification(
+            title="DATA4MINE WELCOME",
+            message=(
+                "Welcome to DATA4MINE. "
+                "Please read the deposit, withdrawal "
+                "and machine instructions carefully."
+            ),
+            active=True
+        )
 
-    required_columns = {
+        db.session.add(
+            notification
+        )
 
-        "users": {
-            "referral_reward_paid":
-                "INTEGER NOT NULL DEFAULT 0",
+    db.session.commit()
 
-            "balance":
-                "INTEGER NOT NULL DEFAULT 0",
 
-            "total_deposited":
-                "INTEGER NOT NULL DEFAULT 0",
-
-            "total_withdrawn":
-                "INTEGER NOT NULL DEFAULT 0",
-
-            "is_admin":
-                "INTEGER NOT NULL DEFAULT 0",
-        },
-
-        "machines": {
-            "buyer_reward":
-                "INTEGER NOT NULL DEFAULT 0",
-
-            "image":
-                "TEXT NOT NULL DEFAULT 'm1.jpg'",
-
-            "active":
-                "INTEGER NOT NULL DEFAULT 1",
-        },
-
-        "user_machines": {
-            "reward_paid":
-                "INTEGER NOT NULL DEFAULT 0",
-
-            "received":
-                "INTEGER NOT NULL DEFAULT 0",
-        },
-    }
-
-    for table, columns in required_columns.items():
-
-        existing_columns = {
-            row[1]
-            for row in connection.execute(
-                f"PRAGMA table_info({table})"
-            ).fetchall()
-        }
-
-        for column, definition in columns.items():
-
-            if column not in existing_columns:
-
-                connection.execute(
-                    f"""
-                    ALTER TABLE {table}
-                    ADD COLUMN {column} {definition}
-                    """
-                )
-
-    connection.commit()
-    connection.close()
+with app.app_context():
+    initialize_database()
 
 
 # ============================================================
-# AUTHENTICATION
+# AUTHENTICATION HELPERS
 # ============================================================
 
 def current_user():
-
     user_id = session.get(
         "user_id"
     )
@@ -637,34 +755,41 @@ def current_user():
     if not user_id:
         return None
 
-    connection = db()
-
-    user = connection.execute(
-        """
-        SELECT *
-        FROM users
-        WHERE id = ?
-        """,
-        (user_id,),
-    ).fetchone()
-
-    connection.close()
-
-    return user
+    return db.session.get(
+        User,
+        user_id
+    )
 
 
-def login_required(view):
-
-    @wraps(view)
+def login_required(function):
+    @wraps(function)
     def wrapped(*args, **kwargs):
 
-        if not current_user():
+        user = current_user()
+
+        if user is None:
+            flash(
+                "Please login first.",
+                "error"
+            )
 
             return redirect(
                 url_for("login")
             )
 
-        return view(
+        if not user.is_active:
+            session.clear()
+
+            flash(
+                "Your account is disabled.",
+                "error"
+            )
+
+            return redirect(
+                url_for("login")
+            )
+
+        return function(
             *args,
             **kwargs
         )
@@ -672,28 +797,33 @@ def login_required(view):
     return wrapped
 
 
-def admin_required(view):
-
-    @wraps(view)
+def admin_required(function):
+    @wraps(function)
     def wrapped(*args, **kwargs):
 
         user = current_user()
 
-        if (
-            not user
-            or not user["is_admin"]
-        ):
-
+        if user is None:
             flash(
-                "Admin access required.",
-                "error",
+                "Admin login required.",
+                "error"
+            )
+
+            return redirect(
+                url_for("admin_login")
+            )
+
+        if not user.is_admin:
+            flash(
+                "Administrator access required.",
+                "error"
             )
 
             return redirect(
                 url_for("dashboard")
             )
 
-        return view(
+        return function(
             *args,
             **kwargs
         )
@@ -702,43 +832,24 @@ def admin_required(view):
 
 
 # ============================================================
-# MAIN HTML TEMPLATE
+# HTML / CSS
 # ============================================================
 
-PAGE = """
-<!doctype html>
-
-<html lang="en">
-
-<head>
-
-<meta charset="utf-8">
-
-<meta
-    name="viewport"
-    content="width=device-width, initial-scale=1"
->
-
-<title>
-    {{ title }} - DATA4MINES
-</title>
-
-<style>
-
+BASE_CSS = """
 :root {
-
-    font-size: 16px;
-
-    --bg: #06130e;
-    --panel: #0d241a;
-    --panel2: #102b20;
-    --text: #f4fff9;
-    --muted: #a8c0b5;
-    --line: #24513e;
-    --accent: #20d37b;
-    --danger: #ff6b6b;
-    --warn: #f6c453;
-
+    --green-dark: #032d20;
+    --green: #075b3d;
+    --green-mid: #08784f;
+    --green-light: #10a66a;
+    --green-soft: #0d3f2e;
+    --black-green: #011d15;
+    --white: #ffffff;
+    --muted: #c6ddd5;
+    --danger: #ff5c67;
+    --warning: #f3bd3e;
+    --success: #33d18b;
+    --border: rgba(255,255,255,.13);
+    --shadow: 0 12px 35px rgba(0,0,0,.30);
 }
 
 * {
@@ -750,939 +861,630 @@ html {
 }
 
 body {
-
     margin: 0;
-
+    min-height: 100vh;
+    color: var(--white);
+    background:
+        linear-gradient(
+            rgba(1,29,21,.88),
+            rgba(1,29,21,.94)
+        ),
+        url('/static/background/background.jpg')
+        center / cover fixed no-repeat;
     font-family:
         Arial,
         Helvetica,
         sans-serif;
-
     font-size: 16px;
+}
 
-    line-height: 1.5;
-
-    color: var(--text);
-
+body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
     background:
-
-        linear-gradient(
-            rgba(3,15,10,.88),
-            rgba(3,15,10,.94)
-        ),
-
-        url(
-            "{{ url_for(
-                'static',
-                filename='machines/bg.jpg'
-            ) }}"
-        )
-
-        center / cover fixed;
-
-    background-color: var(--bg);
-
+        radial-gradient(
+            circle at top right,
+            rgba(16,166,106,.15),
+            transparent 35%
+        );
+    z-index: -1;
 }
 
 a {
-    color: inherit;
+    color: #8ff0c5;
     text-decoration: none;
 }
 
-.wrap {
+button,
+input,
+select,
+textarea {
+    font: inherit;
+}
 
-    max-width: 1200px;
+button {
+    cursor: pointer;
+}
 
+.container {
+    width: min(1180px, 94%);
     margin: auto;
-
-    padding: 20px;
-
 }
 
 .nav {
-
     position: sticky;
-
     top: 0;
-
-    z-index: 20;
-
-    background:
-        rgba(5,18,13,.96);
-
-    border-bottom:
-        1px solid var(--line);
-
+    z-index: 50;
+    background: rgba(1,29,21,.96);
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(15px);
 }
 
-.navin {
-
-    max-width: 1200px;
-
-    margin: auto;
-
+.nav-inner {
+    min-height: 66px;
     display: flex;
-
     align-items: center;
-
-    justify-content:
-        space-between;
-
-    gap: 14px;
-
-    padding: 12px 20px;
-
+    justify-content: space-between;
+    gap: 15px;
 }
 
 .brand {
-
-    font-size: 22px;
-
-    font-weight: 800;
-
+    font-weight: 900;
+    letter-spacing: 1px;
+    color: #fff;
 }
 
-.brand span {
-    color: var(--accent);
-}
-
-.links {
-
+.nav-links {
     display: flex;
-
-    gap: 10px;
-
     align-items: center;
-
+    gap: 8px;
     flex-wrap: wrap;
-
 }
 
-.links a {
-
-    padding:
-        8px 10px;
-
-    border-radius:
-        9px;
-
+.nav-links a {
+    padding: 10px 12px;
+    border-radius: 10px;
+    color: #fff;
 }
 
-.links a:hover {
-
-    background:
-        var(--panel2);
-
+.nav-links a:hover {
+    background: rgba(16,166,106,.18);
 }
 
-.adminlink {
-
-    border:
-        1px solid var(--accent);
-
+.hero {
+    padding: 45px 0 25px;
 }
 
-.grid {
-
-    display: grid;
-
-    grid-template-columns:
-        repeat(3, 1fr);
-
-    gap: 16px;
-
+.hero h1 {
+    margin: 0 0 10px;
+    font-size: clamp(28px, 6vw, 52px);
+    color: #fff;
 }
 
-.grid2 {
-
-    display: grid;
-
-    grid-template-columns:
-        repeat(2, 1fr);
-
-    gap: 16px;
-
+.hero p {
+    color: var(--muted);
+    max-width: 700px;
+    line-height: 1.7;
 }
 
 .card {
+    background: rgba(3,45,32,.88);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 20px;
+    box-shadow: var(--shadow);
+}
 
-    background:
-        rgba(13,36,26,.94);
+.grid {
+    display: grid;
+    grid-template-columns:
+        repeat(
+            auto-fit,
+            minmax(240px, 1fr)
+        );
+    gap: 18px;
+}
 
-    border:
-        1px solid var(--line);
-
-    border-radius:
-        16px;
-
-    padding:
-        18px;
-
-    box-shadow:
-        0 8px 30px
-        rgba(0,0,0,.18);
-
+.stats {
+    display: grid;
+    grid-template-columns:
+        repeat(
+            auto-fit,
+            minmax(180px, 1fr)
+        );
+    gap: 14px;
+    margin: 20px 0;
 }
 
 .stat {
-    min-height: 120px;
+    background: rgba(7,91,61,.75);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 18px;
+}
+
+.stat strong {
+    display: block;
+    font-size: 25px;
+    margin-top: 8px;
 }
 
 .muted {
     color: var(--muted);
 }
 
-h1 {
-
-    font-size:
-        30px;
-
-    margin:
-        8px 0 18px;
-
-}
-
-h2 {
-    font-size: 22px;
-}
-
-h3 {
-    font-size: 18px;
-}
-
-.big {
-
-    font-size:
-        26px;
-
-    font-weight:
-        800;
-
+.title {
+    margin-top: 0;
 }
 
 .btn {
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 44px;
+    padding: 10px 16px;
+    border: 0;
+    border-radius: 11px;
+    background: var(--green-light);
+    color: #fff;
+    font-weight: 700;
+}
 
-    display:
-        inline-block;
-
-    border:
-        0;
-
-    border-radius:
-        10px;
-
-    padding:
-        11px 15px;
-
-    background:
-        var(--accent);
-
-    color:
-        #03130b;
-
-    font-weight:
-        700;
-
-    cursor:
-        pointer;
-
-    font-size:
-        16px;
-
+.btn:hover {
+    filter: brightness(1.12);
 }
 
 .btn.secondary {
-
-    background:
-        #183c2b;
-
-    color:
-        var(--text);
-
-    border:
-        1px solid var(--line);
-
+    background: #0a4935;
+    border: 1px solid var(--border);
 }
 
 .btn.danger {
-
-    background:
-        var(--danger);
-
-    color:
-        #260000;
-
+    background: #b52e39;
 }
 
-.btn.warn {
-
-    background:
-        var(--warn);
-
-    color:
-        #241900;
-
+.btn.warning {
+    background: #9c7518;
 }
 
-.btn:disabled {
-
-    opacity:
-        .45;
-
-    cursor:
-        not-allowed;
-
+.form {
+    display: grid;
+    gap: 13px;
 }
 
-form {
-    margin: 0;
+label {
+    font-weight: 700;
+    margin-bottom: -6px;
 }
 
 input,
 select,
 textarea {
-
     width: 100%;
-
-    padding: 12px;
-
+    padding: 13px;
+    color: #fff;
+    background: #062f23;
+    border: 1px solid rgba(255,255,255,.18);
     border-radius: 10px;
+    outline: none;
+}
 
-    border:
-        1px solid var(--line);
-
-    background:
-        #071a12;
-
-    color:
-        var(--text);
-
-    font-size:
-        16px;
-
-    margin:
-        6px 0 12px;
-
+input:focus,
+select:focus,
+textarea:focus {
+    border-color: var(--green-light);
+    box-shadow: 0 0 0 3px rgba(16,166,106,.14);
 }
 
 textarea {
-
-    min-height:
-        100px;
-
+    min-height: 110px;
+    resize: vertical;
 }
 
-.row {
-
-    display:
-        flex;
-
-    gap:
-        10px;
-
-    align-items:
-        center;
-
-    flex-wrap:
-        wrap;
-
+.machine {
+    overflow: hidden;
+    padding: 0;
 }
 
-.table {
-
-    width:
-        100%;
-
-    border-collapse:
-        collapse;
-
-    font-size:
-        15px;
-
+.machine-image {
+    width: 100%;
+    height: 190px;
+    object-fit: cover;
+    display: block;
+    background: #052a20;
 }
 
-.table th,
-.table td {
-
-    padding:
-        10px;
-
-    border-bottom:
-        1px solid var(--line);
-
-    text-align:
-        left;
-
-    vertical-align:
-        top;
-
+.machine-body {
+    padding: 18px;
 }
 
-.machine-grid {
-
-    display:
-        grid;
-
-    grid-template-columns:
-        repeat(3, 1fr);
-
-    gap:
-        16px;
-
+.machine h3 {
+    margin-top: 0;
 }
 
-.machine img {
-
-    width:
-        100%;
-
-    height:
-        230px;
-
-    object-fit:
-        cover;
-
-    border-radius:
-        12px;
-
-    background:
-        #06130e;
-
+.price {
+    font-size: 23px;
+    font-weight: 900;
 }
 
 .badge {
-
-    display:
-        inline-block;
-
-    padding:
-        4px 9px;
-
-    border-radius:
-        999px;
-
-    background:
-        #164b31;
-
-    color:
-        #b8ffd7;
-
-    font-size:
-        13px;
-
+    display: inline-block;
+    padding: 5px 9px;
+    border-radius: 999px;
+    background: rgba(16,166,106,.18);
+    border: 1px solid rgba(16,166,106,.3);
+    font-size: 13px;
 }
 
-.notice {
-
-    padding:
-        12px;
-
-    border-radius:
-        10px;
-
-    background:
-        #102d21;
-
-    border:
-        1px solid var(--line);
-
-    margin-bottom:
-        10px;
-
+.alert {
+    margin: 15px 0;
+    padding: 13px 15px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: #073426;
 }
 
-.error {
-
-    background:
-        #3a1111;
-
-    border-color:
-        #7b2a2a;
-
+.alert.error {
+    background: #541f25;
 }
 
-.success {
-
-    background:
-        #103d27;
-
-    border-color:
-        #287e52;
-
+.alert.success {
+    background: #074b31;
 }
 
-.warning {
-
-    background:
-        #3b2b0c;
-
-    border-color:
-        #80631d;
-
+.alert.warning {
+    background: #5a4513;
 }
 
-.flash {
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th,
+td {
+    padding: 11px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+}
+
+.table-wrap {
+    overflow-x: auto;
+}
+
+.popup {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(0,0,0,.72);
+}
+
+.popup-box {
+    width: min(500px, 100%);
+    background: #043324;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 24px;
+    box-shadow: var(--shadow);
+}
+
+.popup-close {
+    float: right;
+    border: 0;
+    background: transparent;
+    color: #fff;
+    font-size: 27px;
+}
+
+.chat-box {
+    max-height: 420px;
+    overflow-y: auto;
+    display: grid;
+    gap: 10px;
+}
+
+.chat-message {
+    padding: 11px;
+    border-radius: 12px;
+    background: #073b2b;
+}
+
+.chat-message.admin {
+    background: #086444;
+}
+
+.notification-icon {
+    position: relative;
+}
+
+.notification-dot {
+    position: absolute;
+    top: 4px;
+    right: 3px;
+    min-width: 17px;
+    height: 17px;
+    padding: 0 4px;
+    border-radius: 99px;
+    background: #ff4e59;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.progress {
+    height: 12px;
+    background: #011c14;
+    border-radius: 999px;
+    overflow: hidden;
     margin: 10px 0;
 }
 
-.bar {
-
-    height:
-        18px;
-
-    background:
-        #092016;
-
-    border:
-        1px solid var(--line);
-
-    border-radius:
-        999px;
-
-    overflow:
-        hidden;
-
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(
+        90deg,
+        #08784f,
+        #33d18b
+    );
 }
 
-.fill {
-
-    height:
-        100%;
-
-    background:
-        var(--accent);
-
+.referral {
+    word-break: break-all;
+    padding: 12px;
+    border-radius: 10px;
+    background: #011d15;
+    border: 1px solid var(--border);
 }
 
 .footer {
-
-    text-align:
-        center;
-
-    padding:
-        30px;
-
-    color:
-        var(--muted);
-
-}
-
-.bottom {
-    display: none;
-}
-
-.login {
-
-    max-width:
-        520px;
-
-    margin:
-        50px auto;
-
+    padding: 40px 0;
+    color: var(--muted);
+    text-align: center;
 }
 
 .small {
     font-size: 14px;
 }
 
-.center {
-    text-align: center;
+@media (max-width: 700px) {
+    .nav-inner {
+        align-items: flex-start;
+        padding: 12px 0;
+        flex-direction: column;
+    }
+
+    .nav-links {
+        width: 100%;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+    }
+
+    .nav-links a {
+        white-space: nowrap;
+    }
+
+    .card {
+        padding: 16px;
+    }
+
+    th,
+    td {
+        font-size: 14px;
+    }
 }
-
-.icon {
-    font-size: 21px;
-    display: block;
-}
-
-.admin-grid {
-
-    display:
-        grid;
-
-    grid-template-columns:
-        repeat(4, 1fr);
-
-    gap:
-        12px;
-
-}
-
-.kpi {
-
-    font-size:
-        24px;
-
-    font-weight:
-        800;
-
-}
+"""
 
 
-/* ============================================================
-   MOBILE
-   ============================================================ */
+# ============================================================
+# BASE TEMPLATE
+# ============================================================
 
-@media (max-width: 800px) {
-
-    html {
-        font-size: 16px;
-    }
-
-    body {
-        font-size: 16px;
-    }
-
-    .wrap {
-        padding: 14px;
-    }
-
-    .navin {
-        padding:
-            10px 14px;
-    }
-
-    .links {
-        display: none;
-    }
-
-    .grid,
-    .grid2,
-    .machine-grid {
-
-        grid-template-columns:
-            1fr;
-
-    }
-
-    .admin-grid {
-
-        grid-template-columns:
-            repeat(2, 1fr);
-
-    }
-
-    h1 {
-        font-size: 26px;
-    }
-
-    .machine img {
-        height: 240px;
-    }
-
-    .bottom {
-
-        display:
-            grid;
-
-        position:
-            fixed;
-
-        bottom:
-            0;
-
-        left:
-            0;
-
-        right:
-            0;
-
-        z-index:
-            30;
-
-        grid-template-columns:
-            repeat(6, 1fr);
-
-        background:
-            #06150f;
-
-        border-top:
-            1px solid var(--line);
-
-        padding:
-            7px 4px;
-
-    }
-
-    .bottom a {
-
-        text-align:
-            center;
-
-        font-size:
-            12px;
-
-        color:
-            var(--muted);
-
-    }
-
-    .bottom .icon {
-        font-size: 20px;
-    }
-
-    .page-space {
-        height: 72px;
-    }
-
-}
-
+BASE_TEMPLATE = """
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport"
+      content="width=device-width, initial-scale=1">
+<title>{{ title or "DATA4MINE" }}</title>
+<style>
+""" + BASE_CSS + """
 </style>
-
 </head>
 
 <body>
 
+<nav class="nav">
+<div class="container nav-inner">
 
-<header class="nav">
-
-<div class="navin">
-
-<a
-    class="brand"
-    href="{{ url_for('dashboard') }}"
->
-    DATA4<span>MINES</span>
+<a class="brand"
+   href="{{ url_for('dashboard') if user else url_for('login') }}">
+DATA4MINE
 </a>
 
-
-<nav class="links">
+<div class="nav-links">
 
 {% if user %}
 
 <a href="{{ url_for('dashboard') }}">
-    Dashboard
+Dashboard
 </a>
 
 <a href="{{ url_for('shop') }}">
-    🛒 Shop
+Shop
 </a>
 
 <a href="{{ url_for('my_machines') }}">
-    ⚙ My Machines
-</a>
-
-<a href="{{ url_for('rewards') }}">
-    🎁 Rewards
+My Machines
 </a>
 
 <a href="{{ url_for('deposit') }}">
-    Deposit
+Deposit
 </a>
 
 <a href="{{ url_for('withdraw') }}">
-    Withdraw
+Withdraw
 </a>
 
-<a href="{{ url_for('notifications') }}">
-    🔔
+<a href="{{ url_for('rewards') }}">
+Rewards
 </a>
 
 <a href="{{ url_for('chat') }}">
-    💬
+Chat
 </a>
 
-{% if user['is_admin'] %}
+<a class="notification-icon"
+   href="{{ url_for('notifications') }}">
+🔔
 
-<a
-    class="adminlink"
-    href="{{ url_for('admin') }}"
->
-    Admin
+{% if unread_notifications > 0 %}
+<span class="notification-dot">
+{{ unread_notifications }}
+</span>
+{% endif %}
+
 </a>
 
+{% if user.is_admin %}
+<a href="{{ url_for('admin_panel') }}">
+Admin
+</a>
 {% endif %}
 
 <a href="{{ url_for('logout') }}">
-    Logout
+Logout
+</a>
+
+{% else %}
+
+<a href="{{ url_for('login') }}">
+Login
+</a>
+
+<a href="{{ url_for('register') }}">
+Register
 </a>
 
 {% endif %}
 
+</div>
+</div>
 </nav>
 
-</div>
 
-</header>
+<main class="container">
 
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
 
-<main class="wrap">
+{% for category, message in messages %}
 
-{% with messages =
-    get_flashed_messages(
-        with_categories=true
-    )
-%}
-
-{% for category, msg in messages %}
-
-<div
-    class="notice flash {{ category }}"
->
-    {{ msg }}
+<div class="alert {{ category }}">
+{{ message }}
 </div>
 
 {% endfor %}
 
+{% endif %}
 {% endwith %}
 
 
-{{ body|safe }}
+{{ content|safe }}
 
 </main>
 
 
-{% if user %}
-
-<div class="bottom">
-
-<a href="{{ url_for('dashboard') }}">
-    <span class="icon">⌂</span>
-    Home
-</a>
-
-<a href="{{ url_for('shop') }}">
-    <span class="icon">🛒</span>
-    Shop
-</a>
-
-<a href="{{ url_for('my_machines') }}">
-    <span class="icon">⚙</span>
-    Machines
-</a>
-
-<a href="{{ url_for('rewards') }}">
-    <span class="icon">🎁</span>
-    Rewards
-</a>
-
-<a href="{{ url_for('chat') }}">
-    <span class="icon">💬</span>
-    Chat
-</a>
-
-<a href="{{ url_for('withdraw') }}">
-    <span class="icon">💸</span>
-    Withdraw
-</a>
-
+<div class="footer">
+DATA4MINE © 2026
 </div>
-
-<div class="page-space"></div>
-
-{% endif %}
-
-
-<footer class="footer">
-
-{{ COMPANY_NAME }}
-
-•
-
-Manual deposit and withdrawal approval
-
-</footer>
-
 
 </body>
 </html>
 """
 
 
-def render_page(
-    title,
-    content,
-    **context
-):
-
+def page(title, content, **context):
     user = current_user()
 
+    unread = 0
+
+    if user:
+        active_notifications = Notification.query.filter_by(
+            active=True
+        ).all()
+
+        read_ids = {
+            row.notification_id
+            for row in NotificationRead.query.filter_by(
+                user_id=user.id
+            ).all()
+        }
+
+        unread = sum(
+            1
+            for notification in active_notifications
+            if notification.id not in read_ids
+        )
+
     return render_template_string(
-        PAGE,
+        BASE_TEMPLATE,
         title=title,
-        body=content,
+        content=content,
         user=user,
-        COMPANY_NAME=COMPANY_NAME,
-        **context,
+        unread_notifications=unread,
+        **context
     )
 
 
 # ============================================================
-# HOME
+# PUBLIC ROUTES
 # ============================================================
 
 @app.route("/")
 def index():
+    user = current_user()
 
-    if current_user():
-
+    if user:
         return redirect(
             url_for("dashboard")
         )
 
-    return render_page(
-        "Welcome",
-        """
-        <section class="card login center">
-
-            <h1>
-                DATA4<span
-                    style="color:#20d37b"
-                >MINES</span>
-            </h1>
-
-            <p class="muted">
-                Investment management portal
-            </p>
-
-            <div
-                class="row"
-                style="justify-content:center"
-            >
-
-                <a
-                    class="btn"
-                    href="{{ url_for('login') }}"
-                >
-                    Login
-                </a>
-
-                <a
-                    class="btn secondary"
-                    href="{{ url_for('register') }}"
-                >
-                    Register
-                </a>
-
-            </div>
-
-        </section>
-        """
+    return redirect(
+        url_for("login")
     )
 
 
-# ============================================================
-# REGISTER
-# ============================================================
-
-@app.route(
-    "/register",
-    methods=["GET", "POST"]
-)
+@app.route("/register", methods=["GET", "POST"])
 def register():
+
+    if current_user():
+        return redirect(
+            url_for("dashboard")
+        )
 
     if request.method == "POST":
 
-        name = request.form.get(
-            "name",
+        phone = request.form.get(
+            "phone",
             ""
         ).strip()
 
-        phone = normalize_phone(
-            request.form.get("phone")
-        )
-
         password = request.form.get(
             "password",
+            ""
+        )
+
+        confirm = request.form.get(
+            "confirm",
             ""
         )
 
@@ -1691,293 +1493,343 @@ def register():
             ""
         ).strip().upper()
 
-        if (
-            not name
-            or len(phone) < 9
-            or len(password) < 6
-        ):
-
+        if not phone or not password:
             flash(
-                "Enter a valid name, phone number and password of at least 6 characters.",
-                "error",
+                "Phone number and password are required.",
+                "error"
             )
 
-            return redirect(
-                url_for("register")
-            )
-
-        connection = db()
-
-        existing = connection.execute(
-            """
-            SELECT id
-            FROM users
-            WHERE phone = ?
-            """,
-            (phone,),
-        ).fetchone()
-
-        if existing:
-
-            connection.close()
-
+        elif password != confirm:
             flash(
-                "Phone number is already registered.",
-                "error",
+                "Passwords do not match.",
+                "error"
             )
 
-            return redirect(
-                url_for("register")
+        elif len(password) < 4:
+            flash(
+                "Password must contain at least 4 characters.",
+                "error"
             )
 
-        referred_by = None
-
-        if referral:
-
-            referral_user = connection.execute(
-                """
-                SELECT referral_code
-                FROM users
-                WHERE referral_code = ?
-                """,
-                (referral,),
-            ).fetchone()
-
-            if referral_user:
-                referred_by = referral
-
-        referral_code = make_referral_code()
-
-        while connection.execute(
-            """
-            SELECT id
-            FROM users
-            WHERE referral_code = ?
-            """,
-            (referral_code,),
-        ).fetchone():
-
-            referral_code = make_referral_code()
-
-        connection.execute(
-            """
-            INSERT INTO users (
-                phone,
-                name,
-                password_hash,
-                referral_code,
-                referred_by,
-                referral_reward_paid,
-                created_at
+        elif User.query.filter_by(
+            phone=phone
+        ).first():
+            flash(
+                "This phone number is already registered.",
+                "error"
             )
-            VALUES (?, ?, ?, ?, ?, 0, ?)
-            """,
-            (
-                phone,
-                name,
-                generate_password_hash(
-                    password
+
+        else:
+
+            referral_user = None
+
+            if referral:
+                referral_user = User.query.filter_by(
+                    referral_code=referral
+                ).first()
+
+            code = uuid.uuid4().hex[:10].upper()
+
+            user = User(
+                phone=phone,
+                referral_code=code,
+                referred_by=(
+                    referral_user.id
+                    if referral_user
+                    else None
                 ),
-                referral_code,
-                referred_by,
-                now(),
-            ),
-        )
+                balance=0
+            )
 
-        connection.commit()
-        connection.close()
+            user.set_password(
+                password
+            )
 
-        flash(
-            "Registration successful. Please log in.",
-            "success",
-        )
+            db.session.add(
+                user
+            )
 
-        return redirect(
-            url_for("login")
-        )
+            db.session.commit()
 
-    return render_page(
+            flash(
+                "Registration successful. Please login.",
+                "success"
+            )
+
+            return redirect(
+                url_for("login")
+            )
+
+    referral = request.args.get(
+        "ref",
+        ""
+    )
+
+    content = """
+    <section class="hero">
+        <h1>DATA4MINE WELCOME</h1>
+        <p>
+            Create your account and start using your DATA4MINE dashboard.
+        </p>
+    </section>
+
+    <div class="card" style="max-width:520px;margin:auto;">
+        <h2 class="title">Create Account</h2>
+
+        <form class="form" method="POST">
+
+            <label>Phone Number</label>
+            <input
+                name="phone"
+                required
+                placeholder="Enter phone number">
+
+            <label>Password</label>
+            <input
+                type="password"
+                name="password"
+                required
+                placeholder="Create password">
+
+            <label>Confirm Password</label>
+            <input
+                type="password"
+                name="confirm"
+                required
+                placeholder="Repeat password">
+
+            <label>Referral Code</label>
+            <input
+                name="referral"
+                value="{{ referral }}"
+                placeholder="Optional referral code">
+
+            <button class="btn" type="submit">
+                Register
+            </button>
+
+        </form>
+    </div>
+    """
+
+    return page(
         "Register",
-        """
-        <section class="card login">
-
-            <h1>Create account</h1>
-
-            <form method="post">
-
-                <label>
-                    Full name
-                </label>
-
-                <input
-                    name="name"
-                    required
-                >
-
-                <label>
-                    Phone number
-                </label>
-
-                <input
-                    name="phone"
-                    inputmode="tel"
-                    required
-                >
-
-                <label>
-                    Password
-                </label>
-
-                <input
-                    name="password"
-                    type="password"
-                    minlength="6"
-                    required
-                >
-
-                <label>
-                    Referral code
-                </label>
-
-                <input
-                    name="referral"
-                    value="{{ request.args.get('ref','') }}"
-                >
-
-                <button class="btn">
-                    Register
-                </button>
-
-            </form>
-
-            <p class="muted">
-                Already registered?
-                <a href="{{ url_for('login') }}">
-                    Login
-                </a>
-            </p>
-
-        </section>
-        """
+        render_template_string(
+            content,
+            referral=referral
+        )
     )
 
 
-# ============================================================
-# LOGIN
-# ============================================================
-
-@app.route(
-    "/login",
-    methods=["GET", "POST"]
-)
+@app.route("/login", methods=["GET", "POST"])
 def login():
+
+    if current_user():
+        return redirect(
+            url_for("dashboard")
+        )
 
     if request.method == "POST":
 
-        phone = normalize_phone(
-            request.form.get("phone")
-        )
+        phone = request.form.get(
+            "phone",
+            ""
+        ).strip()
 
         password = request.form.get(
             "password",
             ""
         )
 
-        connection = db()
+        user = User.query.filter_by(
+            phone=phone
+        ).first()
 
-        user = connection.execute(
-            """
-            SELECT *
-            FROM users
-            WHERE phone = ?
-            """,
-            (phone,),
-        ).fetchone()
+        if user and user.check_password(password):
 
-        connection.close()
+            if not user.is_active:
+                flash(
+                    "Your account is disabled.",
+                    "error"
+                )
 
-        if (
-            user
-            and check_password_hash(
-                user["password_hash"],
-                password,
+            else:
+
+                session.clear()
+
+                session["user_id"] = user.id
+
+                # Admin goes directly to admin panel.
+                if user.is_admin:
+                    return redirect(
+                        url_for("admin_panel")
+                    )
+
+                return redirect(
+                    url_for("dashboard")
+                )
+
+        else:
+            flash(
+                "Invalid phone number or password.",
+                "error"
             )
-        ):
 
-            session.clear()
+    content = """
+    <section class="hero">
+        <h1>DATA4MINE WELCOME</h1>
+        <p>
+            Login to your account.
+        </p>
+    </section>
 
-            session["user_id"] = user["id"]
+    <div class="card" style="max-width:520px;margin:auto;">
 
-            return redirect(
-                url_for("dashboard")
-            )
+        <h2 class="title">Login</h2>
 
-        flash(
-            "Invalid phone number or password.",
-            "error",
-        )
+        <form class="form" method="POST">
 
-    return render_page(
+            <label>Phone Number</label>
+
+            <input
+                name="phone"
+                required
+                autocomplete="username"
+                placeholder="Phone number">
+
+            <label>Password</label>
+
+            <input
+                type="password"
+                name="password"
+                required
+                autocomplete="current-password"
+                placeholder="Password">
+
+            <button class="btn" type="submit">
+                Login
+            </button>
+
+        </form>
+
+        <p class="muted">
+            Don't have an account?
+            <a href="{{ url_for('register') }}">
+                Register
+            </a>
+        </p>
+
+    </div>
+    """
+
+    return page(
         "Login",
-        """
-        <section class="card login">
-
-            <h1>Login</h1>
-
-            <form method="post">
-
-                <label>
-                    Phone number
-                </label>
-
-                <input
-                    name="phone"
-                    inputmode="tel"
-                    required
-                >
-
-                <label>
-                    Password
-                </label>
-
-                <input
-                    name="password"
-                    type="password"
-                    required
-                >
-
-                <button class="btn">
-                    Login
-                </button>
-
-            </form>
-
-            <p class="muted">
-
-                New user?
-
-                <a href="{{ url_for('register') }}">
-                    Register
-                </a>
-
-            </p>
-
-        </section>
-        """
+        content
     )
 
 
 # ============================================================
-# LOGOUT
+# HIDDEN ADMIN LOGIN
 # ============================================================
+
+@app.route("/admin-login", methods=["GET", "POST"])
+def admin_login():
+
+    if current_user():
+
+        if current_user().is_admin:
+            return redirect(
+                url_for("admin_panel")
+            )
+
+        return redirect(
+            url_for("dashboard")
+        )
+
+    if request.method == "POST":
+
+        phone = request.form.get(
+            "phone",
+            ""
+        ).strip()
+
+        password = request.form.get(
+            "password",
+            ""
+        )
+
+        user = User.query.filter_by(
+            phone=phone,
+            is_admin=True
+        ).first()
+
+        if user and user.check_password(password):
+
+            session.clear()
+
+            session["user_id"] = user.id
+
+            return redirect(
+                url_for("admin_panel")
+            )
+
+        flash(
+            "Invalid administrator login.",
+            "error"
+        )
+
+    content = """
+    <section class="hero">
+        <h1>Administrator</h1>
+    </section>
+
+    <div class="card"
+         style="max-width:500px;margin:auto;">
+
+        <h2>Admin Login</h2>
+
+        <form class="form" method="POST">
+
+            <label>Admin Phone</label>
+
+            <input
+                name="phone"
+                required>
+
+            <label>Admin Password</label>
+
+            <input
+                type="password"
+                name="password"
+                required>
+
+            <button class="btn" type="submit">
+                Admin Login
+            </button>
+
+        </form>
+
+    </div>
+    """
+
+    return page(
+        "Admin Login",
+        content
+    )
+
 
 @app.route("/logout")
 def logout():
 
     session.clear()
 
+    flash(
+        "You have logged out.",
+        "success"
+    )
+
     return redirect(
-        url_for("index")
+        url_for("login")
     )
 
 
@@ -1991,246 +1843,138 @@ def dashboard():
 
     user = current_user()
 
-    connection = db()
+    machines = UserMachine.query.filter_by(
+        user_id=user.id
+    ).order_by(
+        UserMachine.id.desc()
+    ).all()
 
-    machine_count = connection.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM user_machines
-        WHERE user_id = ?
-        """,
-        (user["id"],),
-    ).fetchone()["total"]
+    pending_deposits = Deposit.query.filter_by(
+        user_id=user.id,
+        status="pending"
+    ).count()
 
-    deposit_accounts = connection.execute(
-        """
-        SELECT *
-        FROM deposit_numbers
-        WHERE active = 1
-        ORDER BY id
-        """
-    ).fetchall()
+    pending_withdrawals = Withdrawal.query.filter_by(
+        user_id=user.id,
+        status="pending"
+    ).count()
 
-    notifications = connection.execute(
-        """
-        SELECT *
-        FROM notifications
-        ORDER BY id DESC
-        LIMIT 3
-        """
-    ).fetchall()
+    content = """
+    <section class="hero">
+        <h1>DATA4MINE WELCOME</h1>
 
-    connection.close()
+        <p>
+            Welcome, {{ user.phone }}.
+        </p>
+    </section>
 
-    body = """
-    <h1>
-        Welcome,
-        {{ user['name'] }}
-    </h1>
+    <div class="stats">
 
+        <div class="stat">
+            Balance
+            <strong>
+                {{ money(user.balance) }}
+            </strong>
+        </div>
+
+        <div class="stat">
+            My Machines
+            <strong>
+                {{ machines|length }}
+            </strong>
+        </div>
+
+        <div class="stat">
+            Pending Deposits
+            <strong>
+                {{ pending_deposits }}
+            </strong>
+        </div>
+
+        <div class="stat">
+            Pending Withdrawals
+            <strong>
+                {{ pending_withdrawals }}
+            </strong>
+        </div>
+
+    </div>
 
     <div class="grid">
 
-        <div class="card stat">
-
-            <div class="muted">
-                Available Balance
-            </div>
-
-            <div class="big">
-                {{ money(user['balance']) }}
-            </div>
-
-        </div>
-
-
-        <div class="card stat">
-
-            <div class="muted">
-                Approved Deposits
-            </div>
-
-            <div class="big">
-                {{ money(user['total_deposited']) }}
-            </div>
-
-        </div>
-
-
-        <div class="card stat">
-
-            <div class="muted">
-                Approved Withdrawals
-            </div>
-
-            <div class="big">
-                {{ money(user['total_withdrawn']) }}
-            </div>
-
-        </div>
-
-    </div>
-
-
-    <div
-        class="grid"
-        style="margin-top:16px"
-    >
-
-        <a
-            class="card center"
-            href="{{ url_for('shop') }}"
-        >
-
-            <span class="icon">
-                🛒
-            </span>
-
-            <h2>
-                Shop
-            </h2>
-
+        <a class="card"
+           href="{{ url_for('shop') }}">
+            <h2>🏭 Shop</h2>
             <p class="muted">
-                Purchase a DATA4MINES machine
+                View available machines.
             </p>
-
         </a>
 
-
-        <a
-            class="card center"
-            href="{{ url_for('my_machines') }}"
-        >
-
-            <span class="icon">
-                ⚙
-            </span>
-
-            <h2>
-                My Machines
-            </h2>
-
+        <a class="card"
+           href="{{ url_for('my_machines') }}">
+            <h2>⚙️ My Machines</h2>
             <p class="muted">
-                {{ machine_count }}
-                purchased machine(s)
+                Track your machine days.
             </p>
-
         </a>
 
-
-        <a
-            class="card center"
-            href="{{ url_for('rewards') }}"
-        >
-
-            <span class="icon">
-                🎁
-            </span>
-
-            <h2>
-                Rewards
-            </h2>
-
+        <a class="card"
+           href="{{ url_for('deposit') }}">
+            <h2>💰 Deposit</h2>
             <p class="muted">
-                Invite friends and earn rewards
+                Submit a manual deposit.
             </p>
+        </a>
 
+        <a class="card"
+           href="{{ url_for('withdraw') }}">
+            <h2>💸 Withdraw</h2>
+            <p class="muted">
+                Submit a withdrawal request.
+            </p>
+        </a>
+
+        <a class="card"
+           href="{{ url_for('rewards') }}">
+            <h2>🎁 Rewards</h2>
+            <p class="muted">
+                Your referral link and rewards.
+            </p>
+        </a>
+
+        <a class="card"
+           href="{{ url_for('chat') }}">
+            <h2>💬 Chat</h2>
+            <p class="muted">
+                Contact the administrator.
+            </p>
         </a>
 
     </div>
 
+    {% if user.is_admin %}
 
-    <div
-        class="grid2"
-        style="margin-top:16px"
-    >
-
-        <div class="card">
-
-            <h2>
-                Deposit Accounts
-            </h2>
-
-            {% for d in deposit_accounts %}
-
-            <div class="notice">
-
-                <b>
-                    {{ d['number'] }}
-                </b>
-
-                <br>
-
-                {{ d['owner_name'] }}
-
-            </div>
-
-            {% else %}
-
-            <p class="muted">
-                No active deposit number.
-            </p>
-
-            {% endfor %}
-
-
-            <a
-                class="btn"
-                href="{{ url_for('deposit') }}"
-            >
-                Make Deposit Request
-            </a>
-
-        </div>
-
-
-        <div class="card">
-
-            <h2>
-                Latest Updates 🔔
-            </h2>
-
-            {% for n in notifications %}
-
-            <div class="notice">
-
-                <b>
-                    {{ n['title'] }}
-                </b>
-
-                <br>
-
-                {{ n['message'] }}
-
-                <div class="small muted">
-                    {{ n['created_at'] }}
-                </div>
-
-            </div>
-
-            {% else %}
-
-            <p class="muted">
-                No new notifications.
-            </p>
-
-            {% endfor %}
-
-        </div>
-
+    <div class="card" style="margin-top:20px;">
+        <h2>Administrator</h2>
+        <a class="btn"
+           href="{{ url_for('admin_panel') }}">
+            Open Admin Panel
+        </a>
     </div>
+
+    {% endif %}
     """
 
-    return render_page(
+    return page(
         "Dashboard",
         render_template_string(
-            body,
+            content,
             user=user,
-            money=money,
-            machine_count=machine_count,
-            deposit_accounts=deposit_accounts,
-            notifications=notifications,
-        ),
+            machines=machines,
+            pending_deposits=pending_deposits,
+            pending_withdrawals=pending_withdrawals,
+            money=format_money
+        )
     )
 
 
@@ -2242,348 +1986,242 @@ def dashboard():
 @login_required
 def shop():
 
-    connection = db()
+    machines = Machine.query.filter_by(
+        active=True
+    ).order_by(
+        Machine.price.asc()
+    ).all()
 
-    machines = connection.execute(
-        """
-        SELECT *
-        FROM machines
-        WHERE active = 1
-        ORDER BY id
-        """
-    ).fetchall()
-
-    connection.close()
-
-    body = """
-    <h1>
-        Machine Shop
-    </h1>
-
-    <p class="muted">
-        Machines are purchased immediately when the user's
-        approved balance is sufficient.
-        Machine purchase itself does not require a second
-        admin approval.
-    </p>
-
-    <div class="machine-grid">
-
-    {% for m in machines %}
-
-    <article class="card machine">
-
-        <img
-            src="{{ url_for(
-                'machine_image',
-                filename=m['image']
-            ) }}"
-            alt="{{ m['name'] }}"
-        >
-
-        <span class="badge">
-            {{ m['code'] }}
-        </span>
-
-        <h2>
-            {{ m['name'] }}
-        </h2>
-
+    content = """
+    <section class="hero">
+        <h1>Machine Shop</h1>
         <p>
-            Purchase:
-            <b>
-                {{ money(m['purchase_amount']) }}
-            </b>
+            Choose an available machine.
         </p>
+    </section>
 
-        <p>
-            Total payout:
-            <b>
-                {{ money(m['payout_amount']) }}
-            </b>
-        </p>
+    <div class="grid">
 
-        <p>
-            Duration:
-            <b>
-                {{ m['days'] }} days
-            </b>
-        </p>
+    {% for machine in machines %}
 
-        <p>
-            Buyer reward:
-            <b>
-                {{ money(buyer_reward(m)) }}
-            </b>
-        </p>
+        <div class="card machine">
 
-        <form
-            method="post"
-            action="{{ url_for(
-                'buy_machine',
-                machine_id=m['id']
-            ) }}"
-        >
+            {% if machine.image_filename %}
 
-            <button class="btn">
-                Buy Machine
-            </button>
+                <img
+                    class="machine-image"
+                    src="{{ url_for('machine_image',
+                                    filename=machine.image_filename) }}"
+                    alt="{{ machine.name }}">
 
-        </form>
+            {% else %}
 
-    </article>
+                <div class="machine-image"
+                     style="display:flex;
+                            align-items:center;
+                            justify-content:center;">
+                    🏭
+                </div>
+
+            {% endif %}
+
+            <div class="machine-body">
+
+                <h3>
+                    {{ machine.name }}
+                </h3>
+
+                <p class="muted">
+                    {{ machine.description }}
+                </p>
+
+                <p class="price">
+                    {{ money(machine.price) }}
+                </p>
+
+                <p>
+                    Daily earning:
+                    <strong>
+                        {{ money(machine.daily_profit) }}
+                    </strong>
+                </p>
+
+                <p>
+                    Duration:
+                    <strong>
+                        {{ machine.duration_days }} days
+                    </strong>
+                </p>
+
+                <p>
+                    Total profit:
+                    <strong>
+                        {{ money(machine.total_profit) }}
+                    </strong>
+                </p>
+
+                <p>
+                    Total expected amount:
+                    <strong>
+                        {{ money(machine.total_return) }}
+                    </strong>
+                </p>
+
+                {% if machine.stock > 0 %}
+
+                    <span class="badge">
+                        Stock: {{ machine.stock }}
+                    </span>
+
+                    <form method="POST"
+                          action="{{ url_for(
+                              'buy_machine',
+                              machine_id=machine.id
+                          ) }}"
+                          style="margin-top:14px;">
+
+                        <button class="btn"
+                                type="submit">
+                            Buy Machine
+                        </button>
+
+                    </form>
+
+                {% else %}
+
+                    <span class="badge">
+                        Out of Stock
+                    </span>
+
+                {% endif %}
+
+            </div>
+        </div>
+
+    {% else %}
+
+        <div class="card">
+            <h2>No machines available</h2>
+            <p class="muted">
+                The administrator has not made any machines available.
+            </p>
+        </div>
 
     {% endfor %}
 
     </div>
     """
 
-    return render_page(
-        "Shop",
+    return page(
+        "Machine Shop",
         render_template_string(
-            body,
+            content,
             machines=machines,
-            money=money,
-            buyer_reward=buyer_reward,
-        ),
+            money=format_money
+        )
     )
 
 
-# ============================================================
-# BUY MACHINE
-# ============================================================
-
-@app.route(
-    "/buy/<int:machine_id>",
-    methods=["POST"]
-)
+@app.route("/machine/<int:machine_id>/buy", methods=["POST"])
 @login_required
 def buy_machine(machine_id):
 
     user = current_user()
 
-    connection = db()
+    machine = db.session.get(
+        Machine,
+        machine_id
+    )
 
-    machine = connection.execute(
-        """
-        SELECT *
-        FROM machines
-        WHERE id = ?
-        AND active = 1
-        """,
-        (machine_id,),
-    ).fetchone()
-
-    if not machine:
-
-        connection.close()
-
+    if machine is None or not machine.active:
         flash(
-            "Machine is unavailable.",
-            "error",
+            "Machine is not available.",
+            "error"
         )
 
         return redirect(
             url_for("shop")
         )
 
-    user_record = connection.execute(
-        """
-        SELECT *
-        FROM users
-        WHERE id = ?
-        """,
-        (user["id"],),
-    ).fetchone()
-
-    if (
-        user_record["balance"]
-        < machine["purchase_amount"]
-    ):
-
-        connection.close()
-
+    if machine.stock <= 0:
         flash(
-            "Insufficient approved balance. Make a deposit and wait for admin approval.",
-            "error",
+            "This machine is out of stock.",
+            "error"
         )
 
         return redirect(
             url_for("shop")
         )
 
-    start = datetime.now(
-        timezone.utc
-    )
-
-    expiry = (
-        start
-        + timedelta(
-            days=machine["days"]
+    if user.balance < machine.price:
+        flash(
+            "Insufficient balance. Please make a deposit and wait for admin approval.",
+            "error"
         )
-    )
 
-    reward = buyer_reward(
-        machine
-    )
-
-    connection.execute(
-        """
-        UPDATE users
-        SET balance =
-            balance - ?
-        WHERE id = ?
-        """,
-        (
-            machine["purchase_amount"],
-            user["id"],
-        ),
-    )
-
-    connection.execute(
-        """
-        INSERT INTO user_machines (
-            user_id,
-            machine_id,
-            purchased_at,
-            expires_at,
-            reward_paid,
-            received
+        return redirect(
+            url_for("shop")
         )
-        VALUES (?, ?, ?, ?, 1, 0)
-        """,
-        (
-            user["id"],
-            machine["id"],
-            start.replace(
-                microsecond=0
-            ).isoformat(),
-            expiry.replace(
-                microsecond=0
-            ).isoformat(),
-        ),
+
+    # Deduct purchase price.
+    user.balance -= machine.price
+
+    # Reduce stock.
+    machine.stock -= 1
+
+    purchase = UserMachine(
+        user_id=user.id,
+        machine_id=machine.id,
+        purchase_price=machine.price,
+        daily_profit=machine.daily_profit,
+        duration_days=machine.duration_days,
+        purchased_at=utc_now()
     )
 
-    # Buyer reward
-    connection.execute(
-        """
-        UPDATE users
-        SET balance =
-            balance + ?
-        WHERE id = ?
-        """,
-        (
-            reward,
-            user["id"],
-        ),
+    db.session.add(
+        purchase
     )
 
-    # ========================================================
-    # REFERRAL REWARD
-    # ========================================================
+    # Referral reward is paid when a referred user
+    # makes a verified machine purchase.
+    if user.referred_by:
 
-    if (
-        user_record["referred_by"]
-        and not user_record["referral_reward_paid"]
-    ):
+        inviter = db.session.get(
+            User,
+            user.referred_by
+        )
 
-        referrer = connection.execute(
-            """
-            SELECT *
-            FROM users
-            WHERE referral_code = ?
-            """,
-            (
-                user_record[
-                    "referred_by"
-                ],
-            ),
-        ).fetchone()
+        if inviter:
 
-        if (
-            referrer
-            and referrer["id"]
-            != user["id"]
-        ):
+            inviter.balance += REFERRAL_REWARD
 
-            connection.execute(
-                """
-                UPDATE users
-                SET balance =
-                    balance + ?
-                WHERE id = ?
-                """,
-                (
-                    REFERRAL_REWARD,
-                    referrer["id"],
-                ),
-            )
-
-            connection.execute(
-                """
-                UPDATE users
-                SET referral_reward_paid = 1
-                WHERE id = ?
-                """,
-                (
-                    user["id"],
-                ),
-            )
-
-            connection.execute(
-                """
-                INSERT INTO notifications (
-                    title,
-                    message,
-                    created_at
+            chat = ChatMessage(
+                user_id=inviter.id,
+                sender="admin",
+                message=(
+                    "Referral reward of "
+                    + format_money(REFERRAL_REWARD)
+                    + " has been added because your referred user purchased a machine."
                 )
-                VALUES (?, ?, ?)
-                """,
-                (
-                    "Referral Reward",
-                    (
-                        "A referral reward of "
-                        f"{REFERRAL_REWARD:,} UGX "
-                        "was credited."
-                    ),
-                    now(),
-                ),
             )
 
-    connection.commit()
-    connection.close()
+            db.session.add(
+                chat
+            )
+
+            # Clear referred_by so the registration reward
+            # cannot be paid repeatedly.
+            user.referred_by = None
+
+    db.session.commit()
 
     flash(
-        (
-            "Machine purchased. "
-            f"Your machine reward of "
-            f"{money(reward)} was credited."
-        ),
-        "success",
+        "Machine purchased successfully.",
+        "success"
     )
 
     return redirect(
         url_for("my_machines")
-    )
-
-
-# ============================================================
-# MACHINE IMAGE
-# ============================================================
-
-@app.route(
-    "/machine-image/<path:filename>"
-)
-def machine_image(filename):
-
-    # Prevent paths such as ../something
-    safe_name = Path(
-        filename
-    ).name
-
-    return send_from_directory(
-        MACHINE_DIR,
-        safe_name,
     )
 
 
@@ -2597,335 +2235,912 @@ def my_machines():
 
     user = current_user()
 
-    connection = db()
+    machines = UserMachine.query.filter_by(
+        user_id=user.id
+    ).order_by(
+        UserMachine.purchased_at.desc()
+    ).all()
 
-    machines = connection.execute(
-        """
-        SELECT
-            um.*,
-            m.code,
-            m.name,
-            m.purchase_amount,
-            m.payout_amount,
-            m.days,
-            m.image,
-            m.buyer_reward
+    content = """
+    <section class="hero">
+        <h1>My Machines</h1>
+        <p>
+            Machine days are based on actual elapsed time.
+            Every 24 hours equals one machine day.
+        </p>
+    </section>
 
-        FROM user_machines um
+    <div class="grid">
 
-        JOIN machines m
-        ON m.id = um.machine_id
-
-        WHERE um.user_id = ?
-
-        ORDER BY um.id DESC
-        """,
-        (
-            user["id"],
-        ),
-    ).fetchall()
-
-    connection.close()
-
-    body = """
-    <h1>
-        My Machines
-    </h1>
-
-    <div class="machine-grid">
-
-    {% for machine in machines %}
-
-        {% set expiry =
-            parse_dt(machine['expires_at'])
-        %}
-
-        {% set purchased =
-            parse_dt(machine['purchased_at'])
-        %}
-
-        {% set current =
-            now_dt()
-        %}
-
-        {% set total_days =
-            machine['days']
-        %}
-
-        {% if current >= expiry %}
-
-            {% set current_day =
-                total_days
-            %}
-
-            {% set completed = true %}
-
-        {% else %}
-
-            {% set seconds =
-                (current - purchased).total_seconds()
-            %}
-
-            {% set current_day =
-                [1, (seconds // 86400)|int + 1]|max
-            %}
-
-            {% if current_day > total_days %}
-                {% set current_day =
-                    total_days
-                %}
-            {% endif %}
-
-            {% set completed = false %}
-
-        {% endif %}
-
-
-        <article class="card machine">
-
-            <img
-                src="{{ url_for(
-                    'machine_image',
-                    filename=machine['image']
-                ) }}"
-                alt="{{ machine['name'] }}"
-            >
-
-            <span class="badge">
-                {{ machine['code'] }}
-            </span>
-
-            <h2>
-                {{ machine['name'] }}
-            </h2>
-
-            <p>
-                Purchased:
-                <b>
-                    {{ money(
-                        machine['purchase_amount']
-                    ) }}
-                </b>
-            </p>
-
-            <p>
-                Total payout:
-                <b>
-                    {{ money(
-                        machine['payout_amount']
-                    ) }}
-                </b>
-            </p>
-
-            <p>
-                Countdown:
-                <b>
-                    {{ current_day }}/{{ total_days }}
-                    days
-                </b>
-            </p>
-
-            <p>
-                Expires:
-                {{ expiry.strftime(
-                    '%Y-%m-%d %H:%M'
-                ) }}
-            </p>
-
-
-            {% if completed
-                and not machine['received'] %}
-
-                <form
-                    method="post"
-                    action="{{ url_for(
-                        'receive_machine',
-                        machine_id=machine['id']
-                    ) }}"
-                >
-
-                    <button class="btn">
-                        Receive Money
-                    </button>
-
-                </form>
-
-            {% elif machine['received'] %}
-
-                <span class="badge">
-                    Money Received
-                </span>
-
-            {% else %}
-
-                <button
-                    class="btn secondary"
-                    disabled
-                >
-                    Not Mature Yet
-                </button>
-
-            {% endif %}
-
-        </article>
-
-    {% else %}
+    {% for item in machines %}
 
         <div class="card">
 
             <h2>
-                No machines yet
+                {{ item.machine.name }}
             </h2>
 
             <p>
-                You have not purchased a machine.
+                Progress:
+                <strong>
+                    {{ item.progress_text }}
+                </strong>
             </p>
 
-            <a
-                class="btn"
-                href="{{ url_for('shop') }}"
-            >
-                Open Shop
-            </a>
+            <div class="progress">
 
+                <div class="progress-bar"
+                     style="width:
+                     {{ (item.days_completed /
+                         item.duration_days * 100)
+                         if item.duration_days else 0 }}%;">
+                </div>
+
+            </div>
+
+            {% if not item.is_complete %}
+
+                <p class="muted">
+                    Remaining:
+                    <span
+                      data-countdown="{{ item.seconds_remaining }}">
+                    </span>
+                </p>
+
+                <p class="small muted">
+                    Completion:
+                    {{ item.finish_time }}
+                    UTC
+                </p>
+
+            {% else %}
+
+                <div class="alert success">
+                    Machine completed.
+                    Your receive-money button is now available.
+                </div>
+
+                {% if item.received_at %}
+
+                    <div class="alert">
+                        Money already received.
+                        <br>
+                        Received:
+                        {{ item.received_at }}
+                    </div>
+
+                {% else %}
+
+                    <form method="POST"
+                          action="{{ url_for(
+                              'receive_machine',
+                              purchase_id=item.id
+                          ) }}">
+
+                        <button class="btn"
+                                type="submit">
+                            Receive Money
+                        </button>
+
+                    </form>
+
+                {% endif %}
+
+            {% endif %}
+
+            <hr>
+
+            <p>
+                Daily:
+                <strong>
+                    {{ money(item.daily_profit) }}
+                </strong>
+            </p>
+
+            <p>
+                Total profit:
+                <strong>
+                    {{ money(item.total_profit) }}
+                </strong>
+            </p>
+
+            <p>
+                Purchased:
+                {{ item.purchased_at }}
+                UTC
+            </p>
+
+        </div>
+
+    {% else %}
+
+        <div class="card">
+            <h2>You have no machines yet.</h2>
+
+            <a class="btn"
+               href="{{ url_for('shop') }}">
+                Visit Shop
+            </a>
         </div>
 
     {% endfor %}
 
     </div>
+
+    <script>
+    function formatRemaining(seconds) {
+
+        if (seconds <= 0) {
+            return "Completed";
+        }
+
+        const days =
+            Math.floor(seconds / 86400);
+
+        seconds %= 86400;
+
+        const hours =
+            Math.floor(seconds / 3600);
+
+        seconds %= 3600;
+
+        const minutes =
+            Math.floor(seconds / 60);
+
+        const secs =
+            seconds % 60;
+
+        return (
+            days + "d " +
+            hours + "h " +
+            minutes + "m " +
+            secs + "s"
+        );
+    }
+
+    function updateCountdowns() {
+
+        document.querySelectorAll(
+            "[data-countdown]"
+        ).forEach(function(element) {
+
+            let seconds =
+                parseInt(
+                    element.getAttribute(
+                        "data-countdown"
+                    )
+                );
+
+            element.textContent =
+                formatRemaining(seconds);
+
+            if (seconds > 0) {
+
+                seconds--;
+
+                element.setAttribute(
+                    "data-countdown",
+                    seconds
+                );
+
+            } else {
+
+                element.textContent =
+                    "Completed — refresh page";
+
+            }
+
+        });
+
+    }
+
+    updateCountdowns();
+
+    setInterval(
+        updateCountdowns,
+        1000
+    );
+    </script>
     """
 
-    return render_page(
+    return page(
         "My Machines",
         render_template_string(
-            body,
+            content,
             machines=machines,
-            money=money,
-            parse_dt=parse_dt,
-            now_dt=lambda:
-                datetime.now(
-                    timezone.utc
-                ),
-        ),
+            money=format_money
+        )
     )
 
 
-# ============================================================
-# RECEIVE MACHINE PAYOUT
-# ============================================================
-
 @app.route(
-    "/receive/<int:machine_id>",
+    "/machine/<int:purchase_id>/receive",
     methods=["POST"]
 )
 @login_required
-def receive_machine(machine_id):
+def receive_machine(purchase_id):
 
     user = current_user()
 
-    connection = db()
+    item = UserMachine.query.filter_by(
+        id=purchase_id,
+        user_id=user.id
+    ).first()
 
-    machine = connection.execute(
-        """
-        SELECT
-            um.*,
-            m.payout_amount
-
-        FROM user_machines um
-
-        JOIN machines m
-        ON m.id = um.machine_id
-
-        WHERE um.id = ?
-        AND um.user_id = ?
-        """,
-        (
-            machine_id,
-            user["id"],
-        ),
-    ).fetchone()
-
-    if not machine:
-
-        connection.close()
-
+    if item is None:
         flash(
             "Machine not found.",
-            "error",
+            "error"
         )
 
         return redirect(
             url_for("my_machines")
         )
 
-    if machine["received"]:
-
-        connection.close()
-
+    if item.received_at:
         flash(
-            "Machine payout was already received.",
-            "warning",
+            "Money from this machine has already been received.",
+            "error"
         )
 
         return redirect(
             url_for("my_machines")
         )
 
-    if (
-        datetime.now(timezone.utc)
-        < parse_dt(
-            machine["expires_at"]
-        )
-    ):
-
-        connection.close()
-
+    if not item.is_complete:
         flash(
-            "Machine has not completed its duration yet.",
-            "error",
+            "The machine has not completed its full 24-hour days yet.",
+            "error"
         )
 
         return redirect(
             url_for("my_machines")
         )
 
-    connection.execute(
-        """
-        UPDATE users
-        SET balance =
-            balance + ?
-        WHERE id = ?
-        """,
-        (
-            machine["payout_amount"],
-            user["id"],
-        ),
+    # Complete it once.
+    item.completed_at = (
+        item.finish_time
     )
 
-    connection.execute(
-        """
-        UPDATE user_machines
-        SET received = 1
-        WHERE id = ?
-        """,
-        (
-            machine_id,
-        ),
-    )
+    item.received_at = utc_now()
 
-    connection.commit()
-    connection.close()
+    # Add profit to balance.
+    user.balance += item.total_profit
+
+    item.reward_received = True
+
+    db.session.commit()
 
     flash(
-        (
-            f"{money(machine['payout_amount'])} "
-            "was added to your balance."
-        ),
-        "success",
+        "Machine profit of "
+        + format_money(item.total_profit)
+        + " has been added to your balance.",
+        "success"
     )
 
     return redirect(
         url_for("my_machines")
+    )
+
+
+# ============================================================
+# DEPOSIT
+# ============================================================
+
+@app.route("/deposit", methods=["GET", "POST"])
+@login_required
+def deposit():
+
+    user = current_user()
+
+    numbers = DepositNumber.query.filter_by(
+        active=True
+    ).all()
+
+    if request.method == "POST":
+
+        amount_text = request.form.get(
+            "amount",
+            ""
+        ).strip()
+
+        number_id = request.form.get(
+            "number_id",
+            ""
+        )
+
+        transaction_message = request.form.get(
+            "transaction_message",
+            ""
+        ).strip()
+
+        try:
+            amount = float(
+                amount_text
+            )
+        except Exception:
+            amount = 0
+
+        selected = None
+
+        try:
+            selected = db.session.get(
+                DepositNumber,
+                int(number_id)
+            )
+        except Exception:
+            selected = None
+
+        if amount <= 0:
+            flash(
+                "Enter a valid deposit amount.",
+                "error"
+            )
+
+        elif selected is None or not selected.active:
+            flash(
+                "Select a valid deposit number.",
+                "error"
+            )
+
+        elif not transaction_message:
+            flash(
+                "Paste the money-sent/transaction message.",
+                "error"
+            )
+
+        else:
+
+            deposit_record = Deposit(
+                user_id=user.id,
+                amount=amount,
+                deposit_number=selected.number,
+                transaction_message=transaction_message,
+                status="pending"
+            )
+
+            db.session.add(
+                deposit_record
+            )
+
+            db.session.commit()
+
+            flash(
+                "Deposit submitted. It will remain pending until the administrator verifies it.",
+                "success"
+            )
+
+            return redirect(
+                url_for("deposit")
+            )
+
+    deposits = Deposit.query.filter_by(
+        user_id=user.id
+    ).order_by(
+        Deposit.created_at.desc()
+    ).limit(20).all()
+
+    content = """
+    <section class="hero">
+        <h1>Deposit</h1>
+        <p>
+            Deposits are manually verified and approved by the administrator.
+        </p>
+    </section>
+
+    <div class="grid">
+
+        <div class="card">
+
+            <h2>Send Money</h2>
+
+            {% if numbers %}
+
+                <div class="alert">
+
+                    <strong>Deposit Numbers</strong>
+
+                    {% for number in numbers %}
+
+                        <p>
+                            {{ number.owner_name }}
+                            <br>
+                            <strong>
+                                {{ number.number }}
+                            </strong>
+                        </p>
+
+                    {% endfor %}
+
+                </div>
+
+                <form class="form"
+                      method="POST">
+
+                    <label>
+                        Amount (UGX)
+                    </label>
+
+                    <input
+                        name="amount"
+                        type="number"
+                        min="1"
+                        step="1"
+                        required>
+
+                    <label>
+                        Deposit Number
+                    </label>
+
+                    <select
+                        name="number_id"
+                        required>
+
+                        <option value="">
+                            Select number
+                        </option>
+
+                        {% for number in numbers %}
+
+                        <option value="{{ number.id }}">
+                            {{ number.owner_name }}
+                            -
+                            {{ number.number }}
+                        </option>
+
+                        {% endfor %}
+
+                    </select>
+
+                    <label>
+                        Paste Money-Sent / Transaction Message
+                    </label>
+
+                    <textarea
+                        name="transaction_message"
+                        required
+                        placeholder="Paste the complete transaction message here"></textarea>
+
+                    <button class="btn"
+                            type="submit">
+                        Submit Deposit for Approval
+                    </button>
+
+                </form>
+
+            {% else %}
+
+                <div class="alert error">
+                    No deposit number is currently available.
+                </div>
+
+            {% endif %}
+
+        </div>
+
+        <div class="card">
+
+            <h2>My Deposits</h2>
+
+            <div class="table-wrap">
+
+            <table>
+
+                <tr>
+                    <th>Amount</th>
+                    <th>Status</th>
+                    <th>Date</th>
+                </tr>
+
+                {% for item in deposits %}
+
+                <tr>
+
+                    <td>
+                        {{ money(item.amount) }}
+                    </td>
+
+                    <td>
+                        {{ item.status }}
+                    </td>
+
+                    <td>
+                        {{ item.created_at }}
+                    </td>
+
+                </tr>
+
+                {% else %}
+
+                <tr>
+                    <td colspan="3">
+                        No deposits yet.
+                    </td>
+                </tr>
+
+                {% endfor %}
+
+            </table>
+
+            </div>
+
+        </div>
+
+    </div>
+    """
+
+    return page(
+        "Deposit",
+        render_template_string(
+            content,
+            numbers=numbers,
+            deposits=deposits,
+            money=format_money
+        )
+    )
+
+
+# ============================================================
+# WITHDRAW
+# ============================================================
+
+@app.route("/withdraw", methods=["GET", "POST"])
+@login_required
+def withdraw():
+
+    user = current_user()
+
+    if request.method == "POST":
+
+        amount_text = request.form.get(
+            "amount",
+            ""
+        ).strip()
+
+        account_name = request.form.get(
+            "account_name",
+            ""
+        ).strip()
+
+        account_number = request.form.get(
+            "account_number",
+            ""
+        ).strip()
+
+        try:
+            amount = float(
+                amount_text
+            )
+        except Exception:
+            amount = 0
+
+        tax = amount * WITHDRAW_TAX_RATE
+        net_amount = amount - tax
+
+        if amount <= 0:
+            flash(
+                "Enter a valid withdrawal amount.",
+                "error"
+            )
+
+        elif not account_name:
+            flash(
+                "Enter the account name.",
+                "error"
+            )
+
+        elif not account_number:
+            flash(
+                "Enter the account number.",
+                "error"
+            )
+
+        elif amount > user.balance:
+            flash(
+                "Insufficient balance.",
+                "error"
+            )
+
+        else:
+
+            # Reserve the requested amount immediately.
+            user.balance -= amount
+
+            withdrawal = Withdrawal(
+                user_id=user.id,
+                amount=amount,
+                tax=tax,
+                net_amount=net_amount,
+                account_name=account_name,
+                account_number=account_number,
+                status="pending"
+            )
+
+            db.session.add(
+                withdrawal
+            )
+
+            db.session.commit()
+
+            flash(
+                "Withdrawal submitted. The administrator will manually process it after the 24-hour processing period.",
+                "success"
+            )
+
+            return redirect(
+                url_for("withdraw")
+            )
+
+    withdrawals = Withdrawal.query.filter_by(
+        user_id=user.id
+    ).order_by(
+        Withdrawal.created_at.desc()
+    ).limit(20).all()
+
+    content = """
+    <section class="hero">
+        <h1>Withdraw</h1>
+        <p>
+            Withdrawals are manually approved by the administrator.
+            A 7% tax is deducted from each withdrawal.
+        </p>
+    </section>
+
+    <div class="grid">
+
+        <div class="card">
+
+            <h2>New Withdrawal</h2>
+
+            <div class="alert">
+
+                Balance:
+                <strong>
+                    {{ money(user.balance) }}
+                </strong>
+
+                <br><br>
+
+                Tax:
+                <strong>7%</strong>
+
+                <br>
+
+                Example:
+                UGX 100,000 withdrawal =
+                UGX 7,000 tax =
+                UGX 93,000 received.
+
+            </div>
+
+            <form class="form"
+                  method="POST">
+
+                <label>
+                    Withdrawal Amount (UGX)
+                </label>
+
+                <input
+                    id="withdrawAmount"
+                    name="amount"
+                    type="number"
+                    min="1"
+                    step="1"
+                    required>
+
+                <div class="alert">
+
+                    Tax:
+                    <strong id="taxAmount">
+                        UGX 0
+                    </strong>
+
+                    <br>
+
+                    You receive:
+                    <strong id="netAmount">
+                        UGX 0
+                    </strong>
+
+                </div>
+
+                <label>
+                    Account Name
+                </label>
+
+                <input
+                    name="account_name"
+                    required
+                    placeholder="Name registered on payment account">
+
+                <label>
+                    Account / Mobile Money Number
+                </label>
+
+                <input
+                    name="account_number"
+                    required
+                    placeholder="Payment number">
+
+                <button class="btn"
+                        type="submit">
+                    Submit Withdrawal
+                </button>
+
+            </form>
+
+        </div>
+
+        <div class="card">
+
+            <h2>My Withdrawals</h2>
+
+            <div class="table-wrap">
+
+            <table>
+
+                <tr>
+                    <th>Amount</th>
+                    <th>Tax</th>
+                    <th>Receive</th>
+                    <th>Status</th>
+                </tr>
+
+                {% for item in withdrawals %}
+
+                <tr>
+
+                    <td>
+                        {{ money(item.amount) }}
+                    </td>
+
+                    <td>
+                        {{ money(item.tax) }}
+                    </td>
+
+                    <td>
+                        {{ money(item.net_amount) }}
+                    </td>
+
+                    <td>
+                        {{ item.status }}
+
+                        {% if item.status == "pending" %}
+
+                        <br>
+
+                        <span
+                          data-countdown="{{ item.seconds_remaining }}">
+                        </span>
+
+                        {% endif %}
+
+                    </td>
+
+                </tr>
+
+                {% else %}
+
+                <tr>
+                    <td colspan="4">
+                        No withdrawals yet.
+                    </td>
+                </tr>
+
+                {% endfor %}
+
+            </table>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <script>
+
+    const amountInput =
+        document.getElementById(
+            "withdrawAmount"
+        );
+
+    function updateWithdraw() {
+
+        const amount =
+            parseFloat(
+                amountInput.value
+            ) || 0;
+
+        const tax =
+            amount * 0.07;
+
+        const net =
+            amount - tax;
+
+        document.getElementById(
+            "taxAmount"
+        ).textContent =
+            "UGX " +
+            Math.round(tax).toLocaleString();
+
+        document.getElementById(
+            "netAmount"
+        ).textContent =
+            "UGX " +
+            Math.round(net).toLocaleString();
+    }
+
+    amountInput.addEventListener(
+        "input",
+        updateWithdraw
+    );
+
+    function countdown() {
+
+        document.querySelectorAll(
+            "[data-countdown]"
+        ).forEach(function(el) {
+
+            let seconds =
+                parseInt(
+                    el.getAttribute(
+                        "data-countdown"
+                    )
+                );
+
+            if (seconds <= 0) {
+                el.textContent =
+                    "24-hour period completed";
+                return;
+            }
+
+            const hours =
+                Math.floor(
+                    seconds / 3600
+                );
+
+            const minutes =
+                Math.floor(
+                    (seconds % 3600) / 60
+                );
+
+            const secs =
+                seconds % 60;
+
+            el.textContent =
+                hours + "h " +
+                minutes + "m " +
+                secs + "s remaining";
+
+            seconds--;
+
+            el.setAttribute(
+                "data-countdown",
+                seconds
+            );
+
+        });
+
+    }
+
+    setInterval(
+        countdown,
+        1000
+    );
+
+    countdown();
+
+    </script>
+    """
+
+    return page(
+        "Withdraw",
+        render_template_string(
+            content,
+            user=user,
+            withdrawals=withdrawals,
+            money=format_money
+        )
     )
 
 
@@ -2939,599 +3154,143 @@ def rewards():
 
     user = current_user()
 
-    connection = db()
+    host = request.host_url.rstrip("/")
 
-    invited = connection.execute(
-        """
-        SELECT
-            name,
-            phone,
-            created_at
-        FROM users
-        WHERE referred_by = ?
-        ORDER BY id DESC
-        """,
-        (
-            user["referral_code"],
-        ),
-    ).fetchall()
-
-    connection.close()
-
-    referral_link = url_for(
-        "register",
-        ref=user["referral_code"],
-        _external=True,
+    referral_link = (
+        host
+        + url_for(
+            "register"
+        )
+        + "?ref="
+        + user.referral_code
     )
 
-    body = """
-    <h1>
-        Rewards
-    </h1>
+    referred_users = User.query.filter_by(
+        referred_by=user.id
+    ).all()
 
-    <div class="grid2">
+    content = """
+    <section class="hero">
+        <h1>Rewards</h1>
+        <p>
+            Invite people using your personal referral link.
+        </p>
+    </section>
 
-        <div class="card">
-
-            <h2>
-                Your Referral Link
-            </h2>
-
-            <input
-                readonly
-                value="{{ referral_link }}"
-            >
-
-            <p>
-                When someone registers through
-                your link and later buys a machine,
-                you receive
-                <b>
-                    {{ money(referral_reward) }}
-                </b>.
-            </p>
-
-            <p>
-                Your referral code:
-                <b>
-                    {{ user['referral_code'] }}
-                </b>
-            </p>
-
-        </div>
-
+    <div class="grid">
 
         <div class="card">
 
-            <h2>
-                Invited Users
-            </h2>
+            <h2>Your Referral Link</h2>
 
-            {% for invited_user in invited %}
-
-            <div class="notice">
-
-                <b>
-                    {{ invited_user['name'] }}
-                </b>
-
-                <br>
-
-                {{ invited_user['phone'] }}
-
-                <br>
-
-                <span class="muted">
-                    {{ invited_user['created_at'] }}
-                </span>
-
+            <div class="referral"
+                 id="referralLink">
+                {{ referral_link }}
             </div>
-
-            {% else %}
-
-            <p class="muted">
-                No invited users yet.
-            </p>
-
-            {% endfor %}
-
-        </div>
-
-    </div>
-    """
-
-    return render_page(
-        "Rewards",
-        render_template_string(
-            body,
-            user=user,
-            referral_link=referral_link,
-            referral_reward=REFERRAL_REWARD,
-            money=money,
-            invited=invited,
-        ),
-    )
-
-
-# ============================================================
-# DEPOSIT
-# ============================================================
-
-@app.route(
-    "/deposit",
-    methods=["GET", "POST"]
-)
-@login_required
-def deposit():
-
-    user = current_user()
-
-    connection = db()
-
-    deposit_numbers = connection.execute(
-        """
-        SELECT *
-        FROM deposit_numbers
-        WHERE active = 1
-        ORDER BY id
-        """
-    ).fetchall()
-
-    if request.method == "POST":
-
-        try:
-            amount = int(
-                request.form.get(
-                    "amount",
-                    0,
-                )
-            )
-        except ValueError:
-            amount = 0
-
-        number = request.form.get(
-            "number",
-            "",
-        ).strip()
-
-        reference = request.form.get(
-            "reference",
-            "",
-        ).strip()
-
-        valid_number = connection.execute(
-            """
-            SELECT number
-            FROM deposit_numbers
-            WHERE number = ?
-            AND active = 1
-            """,
-            (
-                number,
-            ),
-        ).fetchone()
-
-        if (
-            amount <= 0
-            or not valid_number
-            or not reference
-        ):
-
-            connection.close()
-
-            flash(
-                "Enter a valid amount, deposit number and transaction reference.",
-                "error",
-            )
-
-            return redirect(
-                url_for("deposit")
-            )
-
-        connection.execute(
-            """
-            INSERT INTO deposits (
-                user_id,
-                amount,
-                account_number,
-                reference,
-                status,
-                created_at
-            )
-            VALUES (?, ?, ?, ?, 'pending', ?)
-            """,
-            (
-                user["id"],
-                amount,
-                number,
-                reference,
-                now(),
-            ),
-        )
-
-        connection.commit()
-        connection.close()
-
-        flash(
-            "Deposit request submitted. Balance changes only after admin approval.",
-            "success",
-        )
-
-        return redirect(
-            url_for("dashboard")
-        )
-
-    connection.close()
-
-    body = """
-    <h1>
-        Deposit
-    </h1>
-
-    <div class="card">
-
-        <h2>
-            Send Money Manually
-        </h2>
-
-        {% for number in deposit_numbers %}
-
-        <div class="notice">
-
-            <b>
-                {{ number['number'] }}
-            </b>
 
             <br>
 
-            {{ number['owner_name'] }}
+            <button
+                class="btn"
+                onclick="copyReferral()">
+                Copy Referral Link
+            </button>
+
+            <button
+                class="btn secondary"
+                onclick="shareReferral()">
+                Share Link
+            </button>
+
+            <p class="muted small">
+                Referral reward:
+                UGX {{ reward }}.
+                The reward is credited when a referred
+                user successfully purchases a machine.
+            </p>
 
         </div>
 
-        {% else %}
+        <div class="card">
 
-        <p class="muted">
-            No active deposit number.
-        </p>
+            <h2>Referral Statistics</h2>
 
-        {% endfor %}
+            <p>
+                People registered through you:
+                <strong>
+                    {{ referred_users|length }}
+                </strong>
+            </p>
 
+            <p>
+                Reward per qualifying machine purchase:
+                <strong>
+                    {{ money(reward) }}
+                </strong>
+            </p>
 
-        <form method="post">
-
-            <label>
-                Deposit Account
-            </label>
-
-            <select
-                name="number"
-                required
-            >
-
-                {% for number in deposit_numbers %}
-
-                <option
-                    value="{{ number['number'] }}"
-                >
-                    {{ number['number'] }}
-                    —
-                    {{ number['owner_name'] }}
-                </option>
-
-                {% endfor %}
-
-            </select>
-
-
-            <label>
-                Amount (UGX)
-            </label>
-
-            <input
-                name="amount"
-                type="number"
-                min="1"
-                required
-            >
-
-
-            <label>
-                Transaction ID / Reference
-            </label>
-
-            <input
-                name="reference"
-                required
-            >
-
-
-            <button class="btn">
-                Submit Deposit
-            </button>
-
-        </form>
-
-
-        <p class="muted">
-            Your balance will not change until
-            an administrator approves the deposit.
-        </p>
+        </div>
 
     </div>
-    """
-
-    return render_page(
-        "Deposit",
-        render_template_string(
-            body,
-            deposit_numbers=deposit_numbers,
-        ),
-    )
-
-
-# ============================================================
-# WITHDRAW
-# ============================================================
-
-@app.route(
-    "/withdraw",
-    methods=["GET", "POST"]
-)
-@login_required
-def withdraw():
-
-    user = current_user()
-
-    connection = db()
-
-    if request.method == "POST":
-
-        try:
-            amount = int(
-                request.form.get(
-                    "amount",
-                    0,
-                )
-            )
-        except ValueError:
-            amount = 0
-
-        phone = normalize_phone(
-            request.form.get(
-                "phone"
-            )
-        )
-
-        if (
-            amount <= 0
-            or amount > user["balance"]
-            or len(phone) < 9
-        ):
-
-            connection.close()
-
-            flash(
-                "Invalid amount, phone number, or insufficient balance.",
-                "error",
-            )
-
-            return redirect(
-                url_for("withdraw")
-            )
-
-        tax = round(
-            amount
-            * WITHDRAW_TAX_RATE
-        )
-
-        net_amount = (
-            amount - tax
-        )
-
-        connection.execute(
-            """
-            INSERT INTO withdrawals (
-                user_id,
-                amount,
-                tax,
-                net_amount,
-                phone,
-                status,
-                created_at
-            )
-            VALUES (
-                ?, ?, ?, ?, ?, 'pending', ?
-            )
-            """,
-            (
-                user["id"],
-                amount,
-                tax,
-                net_amount,
-                phone,
-                now(),
-            ),
-        )
-
-        connection.commit()
-        connection.close()
-
-        flash(
-            "Withdrawal request submitted. Balance remains unchanged until admin approval.",
-            "success",
-        )
-
-        return redirect(
-            url_for("withdraw")
-        )
-
-    connection.close()
-
-    body = """
-    <h1>
-        Withdraw
-    </h1>
-
-    <div class="card">
-
-        <p>
-            Available balance:
-            <b>
-                {{ money(user['balance']) }}
-            </b>
-        </p>
-
-
-        <form method="post">
-
-            <label>
-                Amount to Withdraw
-            </label>
-
-            <input
-                id="withdraw_amount"
-                name="amount"
-                type="number"
-                min="1"
-                max="{{ user['balance'] }}"
-                required
-            >
-
-
-            <div
-                id="tax_box"
-                class="notice"
-                style="display:none"
-            >
-
-                <div>
-                    Tax (7%):
-                    <b id="tax_value">
-                        0 UGX
-                    </b>
-                </div>
-
-                <div>
-                    Amount remaining
-                    for withdrawal:
-                    <b id="net_value">
-                        0 UGX
-                    </b>
-                </div>
-
-            </div>
-
-
-            <label>
-                Mobile Money /
-                Receiving Phone Number
-            </label>
-
-            <input
-                name="phone"
-                inputmode="tel"
-                required
-            >
-
-
-            <button class="btn">
-                Request Withdrawal
-            </button>
-
-        </form>
-
-
-        <p class="muted">
-
-            The 7% tax is displayed only
-            on the withdrawal page after
-            you enter an amount.
-
-            Admin approval is required.
-
-        </p>
-
-    </div>
-
 
     <script>
 
-    const amountInput =
-        document.getElementById(
-            "withdraw_amount"
-        );
+    function copyReferral() {
 
-    const taxBox =
-        document.getElementById(
-            "tax_box"
-        );
+        const link =
+            document.getElementById(
+                "referralLink"
+            ).textContent.trim();
 
-    const taxValue =
-        document.getElementById(
-            "tax_value"
-        );
+        navigator.clipboard.writeText(
+            link
+        ).then(function() {
 
-    const netValue =
-        document.getElementById(
-            "net_value"
-        );
-
-
-    function calculateWithdraw()
-    {
-
-        const value =
-            Number(
-                amountInput.value || 0
+            alert(
+                "Referral link copied."
             );
 
-        if (value <= 0)
-        {
-
-            taxBox.style.display =
-                "none";
-
-            return;
-
-        }
-
-        const tax =
-            Math.round(
-                value * 0.07
-            );
-
-        const net =
-            value - tax;
-
-        taxBox.style.display =
-            "block";
-
-        taxValue.textContent =
-            tax.toLocaleString()
-            + " UGX";
-
-        netValue.textContent =
-            net.toLocaleString()
-            + " UGX";
+        });
 
     }
 
+    function shareReferral() {
 
-    amountInput.addEventListener(
-        "input",
-        calculateWithdraw
-    );
+        const link =
+            document.getElementById(
+                "referralLink"
+            ).textContent.trim();
+
+        if (
+            navigator.share
+        ) {
+
+            navigator.share({
+                title: "DATA4MINE",
+                text: "Join DATA4MINE",
+                url: link
+            });
+
+        } else {
+
+            copyReferral();
+
+        }
+
+    }
 
     </script>
     """
 
-    return render_page(
-        "Withdraw",
+    return page(
+        "Rewards",
         render_template_string(
-            body,
-            user=user,
-            money=money,
-        ),
+            content,
+            referral_link=referral_link,
+            referred_users=referred_users,
+            reward=REFERRAL_REWARD,
+            money=format_money
+        )
     )
 
 
@@ -3543,170 +3302,177 @@ def withdraw():
 @login_required
 def notifications():
 
-    connection = db()
+    user = current_user()
 
-    rows = connection.execute(
-        """
-        SELECT *
-        FROM notifications
-        ORDER BY id DESC
-        LIMIT 100
-        """
-    ).fetchall()
+    active = Notification.query.filter_by(
+        active=True
+    ).order_by(
+        Notification.created_at.desc()
+    ).all()
 
-    connection.close()
+    # Mark as read when notification page is opened.
+    for notification in active:
 
-    if not rows:
+        existing = NotificationRead.query.filter_by(
+            notification_id=notification.id,
+            user_id=user.id
+        ).first()
 
-        body = """
-        <h1>
-            Notifications 🔔
-        </h1>
+        if existing is None:
+
+            db.session.add(
+                NotificationRead(
+                    notification_id=notification.id,
+                    user_id=user.id
+                )
+            )
+
+    db.session.commit()
+
+    content = """
+    <section class="hero">
+        <h1>Notifications</h1>
+        <p>
+            Updates from DATA4MINE.
+        </p>
+    </section>
+
+    <div class="grid">
+
+    {% for item in notifications %}
 
         <div class="card">
-            No notifications yet.
+
+            <h2>
+                {{ item.title }}
+            </h2>
+
+            <p>
+                {{ item.message }}
+            </p>
+
+            <p class="small muted">
+                {{ item.created_at }}
+            </p>
+
         </div>
-        """
 
-    else:
+    {% else %}
 
-        body = """
-        <h1>
-            Notifications 🔔
-        </h1>
-        """
+        <div class="card">
+            No notifications.
+        </div>
 
-        for row in rows:
+    {% endfor %}
 
-            body += f"""
-            <div class="notice">
+    </div>
+    """
 
-                <b>
-                    {row['title']}
-                </b>
-
-                <br>
-
-                {row['message']}
-
-                <div class="small muted">
-                    {row['created_at']}
-                </div>
-
-            </div>
-            """
-
-    return render_page(
+    return page(
         "Notifications",
-        body,
+        render_template_string(
+            content,
+            notifications=active
+        )
     )
 
 
 # ============================================================
-# USER CHAT
+# CHAT
 # ============================================================
 
-@app.route(
-    "/chat",
-    methods=["GET", "POST"]
-)
+@app.route("/chat", methods=["GET", "POST"])
 @login_required
 def chat():
 
     user = current_user()
 
-    connection = db()
-
     if request.method == "POST":
 
         message = request.form.get(
             "message",
-            "",
+            ""
         ).strip()
 
         if message:
 
-            connection.execute(
-                """
-                INSERT INTO chats (
-                    user_id,
-                    message,
-                    from_admin,
-                    created_at
+            db.session.add(
+                ChatMessage(
+                    user_id=user.id,
+                    sender="user",
+                    message=message
                 )
-                VALUES (?, ?, 0, ?)
-                """,
-                (
-                    user["id"],
-                    message,
-                    now(),
-                ),
             )
 
-            connection.commit()
+            db.session.commit()
 
-    messages = connection.execute(
-        """
-        SELECT *
-        FROM chats
-        WHERE user_id = ?
-        ORDER BY id
-        """,
-        (
-            user["id"],
-        ),
-    ).fetchall()
+            flash(
+                "Message sent.",
+                "success"
+            )
 
-    connection.close()
+            return redirect(
+                url_for("chat")
+            )
 
-    body = """
-    <h1>
-        Chat with Admin 💬
-    </h1>
+    messages = ChatMessage.query.filter_by(
+        user_id=user.id
+    ).order_by(
+        ChatMessage.created_at.asc()
+    ).all()
+
+    content = """
+    <section class="hero">
+        <h1>Chat with Admin</h1>
+    </section>
 
     <div class="card">
 
-        {% for message in messages %}
+        <div class="chat-box">
 
-        <div class="notice">
+        {% for item in messages %}
 
-            <b>
-                {% if message['from_admin'] %}
-                    Admin
-                {% else %}
-                    You
-                {% endif %}
-            </b>
+            <div class="chat-message
+                {% if item.sender == 'admin' %}
+                    admin
+                {% endif %}">
 
-            <br>
+                <strong>
+                    {{ item.sender|capitalize }}
+                </strong>
 
-            {{ message['message'] }}
+                <p>
+                    {{ item.message }}
+                </p>
 
-            <div class="small muted">
-                {{ message['created_at'] }}
+                <small class="muted">
+                    {{ item.created_at }}
+                </small>
+
             </div>
-
-        </div>
 
         {% else %}
 
-        <p class="muted">
-            No messages yet.
-        </p>
+            <p class="muted">
+                No messages yet.
+            </p>
 
         {% endfor %}
 
+        </div>
 
-        <form method="post">
+        <form class="form"
+              method="POST"
+              style="margin-top:20px;">
 
             <textarea
                 name="message"
-                placeholder="Write a message..."
                 required
-            ></textarea>
+                placeholder="Write your message..."></textarea>
 
-            <button class="btn">
-                Send
+            <button class="btn"
+                    type="submit">
+                Send Message
             </button>
 
         </form>
@@ -3714,1936 +3480,2583 @@ def chat():
     </div>
     """
 
-    return render_page(
+    return page(
         "Chat",
         render_template_string(
-            body,
-            messages=messages,
-        ),
+            content,
+            messages=messages
+        )
     )
 
 
 # ============================================================
-# ADMIN DASHBOARD
+# MACHINE IMAGE ROUTE
+# ============================================================
+
+@app.route("/static/machines/<path:filename>")
+def machine_image(filename):
+
+    return send_from_directory(
+        MACHINE_DIR,
+        filename
+    )
+
+
+# ============================================================
+# ADMIN PANEL
 # ============================================================
 
 @app.route("/admin")
 @admin_required
-def admin():
-
-    connection = db()
-
-    joined = connection.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM users
-        WHERE is_admin = 0
-        """
-    ).fetchone()["total"]
-
-    approved_deposits = connection.execute(
-        """
-        SELECT
-            COALESCE(
-                SUM(amount),
-                0
-            ) AS total
-
-        FROM deposits
-
-        WHERE status = 'approved'
-        """
-    ).fetchone()["total"]
-
-    approved_withdrawals = connection.execute(
-        """
-        SELECT
-            COALESCE(
-                SUM(net_amount),
-                0
-            ) AS total
-
-        FROM withdrawals
-
-        WHERE status = 'approved'
-        """
-    ).fetchone()["total"]
-
-    pending_deposits = connection.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM deposits
-        WHERE status = 'pending'
-        """
-    ).fetchone()["total"]
-
-    pending_withdrawals = connection.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM withdrawals
-        WHERE status = 'pending'
-        """
-    ).fetchone()["total"]
-
-    pending_deposit_rows = connection.execute(
-        """
-        SELECT
-            d.*,
-            u.name,
-            u.phone
-
-        FROM deposits d
-
-        JOIN users u
-        ON u.id = d.user_id
-
-        WHERE d.status = 'pending'
-
-        ORDER BY d.id DESC
-        """
-    ).fetchall()
-
-    pending_withdrawal_rows = connection.execute(
-        """
-        SELECT
-            w.*,
-            u.name
-
-        FROM withdrawals w
-
-        JOIN users u
-        ON u.id = w.user_id
-
-        WHERE w.status = 'pending'
-
-        ORDER BY w.id DESC
-        """
-    ).fetchall()
-
-    deposit_numbers = connection.execute(
-        """
-        SELECT *
-        FROM deposit_numbers
-        ORDER BY id
-        """
-    ).fetchall()
-
-    machines = connection.execute(
-        """
-        SELECT *
-        FROM machines
-        ORDER BY id
-        """
-    ).fetchall()
-
-    admins = connection.execute(
-        """
-        SELECT
-            id,
-            name,
-            phone,
-            created_at
-
-        FROM users
-
-        WHERE is_admin = 1
-
-        ORDER BY id
-        """
-    ).fetchall()
-
-    chats = connection.execute(
-        """
-        SELECT
-            c.*,
-            u.name,
-            u.phone
-
-        FROM chats c
-
-        JOIN users u
-        ON u.id = c.user_id
-
-        WHERE c.from_admin = 0
-
-        ORDER BY c.id DESC
-
-        LIMIT 50
-        """
-    ).fetchall()
-
-    connection.close()
-
-    # Simple admin-only flow indicators.
-
-    denominator = max(
-        1,
-        joined,
-    )
-
-    deposit_rate = min(
-        100,
-        round(
-            approved_deposits
-            / (
-                denominator
-                * 100000
-            )
-            * 100,
-            1,
-        ),
-    )
-
-    withdrawal_rate = min(
-        100,
-        round(
-            approved_withdrawals
-            / (
-                denominator
-                * 100000
-            )
-            * 100,
-            1,
-        ),
-    )
-
-    growth_rate = min(
-        100,
-        round(
-            joined
-            / 100
-            * 100,
-            1,
-        ),
-    )
-
-    body = """
-    <h1>
-        Admin Panel
-    </h1>
-
-
-    <div class="admin-grid">
-
-        <div class="card">
-
-            <div class="muted">
-                People Joined
-            </div>
-
-            <div class="kpi">
-                {{ joined }}
-            </div>
-
-        </div>
-
-
-        <div class="card">
-
-            <div class="muted">
-                Approved Deposits
-            </div>
-
-            <div class="kpi">
-                {{ money(approved_deposits) }}
-            </div>
-
-        </div>
-
-
-        <div class="card">
-
-            <div class="muted">
-                Approved Withdrawals
-            </div>
-
-            <div class="kpi">
-                {{ money(approved_withdrawals) }}
-            </div>
-
-        </div>
-
-
-        <div class="card">
-
-            <div class="muted">
-                Pending Actions
-            </div>
-
-            <div class="kpi">
-                {{
-                    pending_deposits
-                    + pending_withdrawals
-                }}
-            </div>
-
-        </div>
-
-    </div>
-
-
-    <!-- ADMIN-ONLY CHART -->
-
-    <div
-        class="grid2"
-        style="margin-top:16px"
-    >
-
-        <div class="card">
-
-            <h2>
-                Company Flow Chart
-            </h2>
-
-            <p>
-                People Joined:
-                <b>
-                    {{ joined }}
-                </b>
-            </p>
-
-            <div class="bar">
-                <div
-                    class="fill"
-                    style="
-                        width:{{ growth_rate }}%;
-                    "
-                ></div>
-            </div>
-
-
-            <p>
-                Deposit Flow:
-                <b>
-                    {{ money(approved_deposits) }}
-                </b>
-            </p>
-
-            <div class="bar">
-                <div
-                    class="fill"
-                    style="
-                        width:{{ deposit_rate }}%;
-                    "
-                ></div>
-            </div>
-
-
-            <p>
-                Withdraw Flow:
-                <b>
-                    {{ money(approved_withdrawals) }}
-                </b>
-            </p>
-
-            <div class="bar">
-                <div
-                    class="fill"
-                    style="
-                        width:{{ withdrawal_rate }}%;
-                    "
-                ></div>
-            </div>
-
-        </div>
-
-
-        <!-- NOTIFICATION -->
-
-        <div class="card">
-
-            <h2>
-                Add Notification
-            </h2>
-
-            <form
-                method="post"
-                action="{{ url_for(
-                    'admin_notification'
-                ) }}"
-            >
-
-                <input
-                    name="title"
-                    placeholder="Notification title"
-                    required
-                >
-
-                <textarea
-                    name="message"
-                    placeholder="Update for users"
-                    required
-                ></textarea>
-
-                <button class="btn">
-                    Publish Notification
-                </button>
-
-            </form>
-
-        </div>
-
-    </div>
-
-
-    <!-- DEPOSITS -->
-
-    <div
-        class="card"
-        style="margin-top:16px"
-    >
-
-        <h2>
-            Pending Deposits
-        </h2>
-
-        <div style="overflow-x:auto">
-
-        <table class="table">
-
-            <tr>
-
-                <th>
-                    User
-                </th>
-
-                <th>
-                    Amount
-                </th>
-
-                <th>
-                    Reference
-                </th>
-
-                <th>
-                    Action
-                </th>
-
-            </tr>
-
-
-            {% for deposit in pending_deposit_rows %}
-
-            <tr>
-
-                <td>
-
-                    {{ deposit['name'] }}
-
-                    <br>
-
-                    {{ deposit['phone'] }}
-
-                </td>
-
-
-                <td>
-                    {{ money(
-                        deposit['amount']
-                    ) }}
-                </td>
-
-
-                <td>
-                    {{ deposit['reference'] }}
-                </td>
-
-
-                <td>
-
-                    <form
-                        method="post"
-                        action="{{ url_for(
-                            'approve_deposit',
-                            deposit_id=deposit['id']
-                        ) }}"
-                    >
-
-                        <button class="btn">
-                            Approve
-                        </button>
-
-                    </form>
-
-
-                    <form
-                        method="post"
-                        action="{{ url_for(
-                            'reject_deposit',
-                            deposit_id=deposit['id']
-                        ) }}"
-                        style="margin-top:5px"
-                    >
-
-                        <button
-                            class="btn danger"
-                        >
-                            Reject
-                        </button>
-
-                    </form>
-
-                </td>
-
-            </tr>
-
-            {% else %}
-
-            <tr>
-
-                <td colspan="4">
-                    No pending deposits.
-                </td>
-
-            </tr>
-
-            {% endfor %}
-
-        </table>
-
-        </div>
-
-    </div>
-
-
-    <!-- WITHDRAWALS -->
-
-    <div
-        class="card"
-        style="margin-top:16px"
-    >
-
-        <h2>
-            Pending Withdrawals
-        </h2>
-
-        <div style="overflow-x:auto">
-
-        <table class="table">
-
-            <tr>
-
-                <th>
-                    User
-                </th>
-
-                <th>
-                    Requested
-                </th>
-
-                <th>
-                    Tax
-                </th>
-
-                <th>
-                    Net Amount
-                </th>
-
-                <th>
-                    Phone
-                </th>
-
-                <th>
-                    Action
-                </th>
-
-            </tr>
-
-
-            {% for withdrawal
-                in pending_withdrawal_rows %}
-
-            <tr>
-
-                <td>
-                    {{ withdrawal['name'] }}
-                </td>
-
-                <td>
-                    {{ money(
-                        withdrawal['amount']
-                    ) }}
-                </td>
-
-                <td>
-                    {{ money(
-                        withdrawal['tax']
-                    ) }}
-                </td>
-
-                <td>
-                    {{ money(
-                        withdrawal['net_amount']
-                    ) }}
-                </td>
-
-                <td>
-                    {{ withdrawal['phone'] }}
-                </td>
-
-                <td>
-
-                    <form
-                        method="post"
-                        action="{{ url_for(
-                            'approve_withdrawal',
-                            withdrawal_id=withdrawal['id']
-                        ) }}"
-                    >
-
-                        <button class="btn">
-                            Approve
-                        </button>
-
-                    </form>
-
-
-                    <form
-                        method="post"
-                        action="{{ url_for(
-                            'reject_withdrawal',
-                            withdrawal_id=withdrawal['id']
-                        ) }}"
-                        style="margin-top:5px"
-                    >
-
-                        <button
-                            class="btn danger"
-                        >
-                            Reject
-                        </button>
-
-                    </form>
-
-                </td>
-
-            </tr>
-
-            {% else %}
-
-            <tr>
-
-                <td colspan="6">
-                    No pending withdrawals.
-                </td>
-
-            </tr>
-
-            {% endfor %}
-
-        </table>
-
-        </div>
-
-    </div>
-
-
-    <!-- DEPOSIT NUMBERS -->
-
-    <div
-        class="grid2"
-        style="margin-top:16px"
-    >
-
-        <div class="card">
-
-            <h2>
-                Deposit Numbers
-            </h2>
-
-            <form
-                method="post"
-                action="{{ url_for(
-                    'admin_add_deposit_number'
-                ) }}"
-            >
-
-                <input
-                    name="number"
-                    placeholder="Deposit number"
-                    required
-                >
-
-                <input
-                    name="owner_name"
-                    placeholder="Account owner"
-                    required
-                >
-
-                <button class="btn">
-                    Add Deposit Number
-                </button>
-
-            </form>
-
-
-            {% for number in deposit_numbers %}
-
-            <div class="notice">
-
-                <b>
-                    {{ number['number'] }}
-                </b>
-
-                —
-                {{ number['owner_name'] }}
-
-                <form
-                    method="post"
-                    action="{{ url_for(
-                        'admin_remove_deposit_number',
-                        number_id=number['id']
-                    ) }}"
-                    style="margin-top:6px"
-                >
-
-                    <button
-                        class="btn danger"
-                    >
-                        Remove
-                    </button>
-
-                </form>
-
-            </div>
-
-            {% endfor %}
-
-        </div>
-
-
-        <!-- MACHINES -->
-
-        <div class="card">
-
-            <h2>
-                Machine Management
-            </h2>
-
-            <form
-                method="post"
-                action="{{ url_for(
-                    'admin_add_machine'
-                ) }}"
-            >
-
-                <input
-                    name="code"
-                    placeholder="Code e.g. M12"
-                    required
-                >
-
-                <input
-                    name="name"
-                    placeholder="Machine name"
-                    required
-                >
-
-                <input
-                    name="purchase_amount"
-                    type="number"
-                    placeholder="Purchase amount"
-                    required
-                >
-
-                <input
-                    name="payout_amount"
-                    type="number"
-                    placeholder="Total payout"
-                    required
-                >
-
-                <input
-                    name="days"
-                    type="number"
-                    min="1"
-                    placeholder="Days"
-                    required
-                >
-
-                <input
-                    name="buyer_reward"
-                    type="number"
-                    min="0"
-                    placeholder="Buyer reward"
-                    required
-                >
-
-                <input
-                    name="image"
-                    placeholder="Image e.g. m11.jpg"
-                    value="m1.jpg"
-                >
-
-                <button class="btn">
-                    Add Machine
-                </button>
-
-            </form>
-
-
-            {% for machine in machines %}
-
-            <div class="notice">
-
-                <b>
-                    {{ machine['code'] }}
-                </b>
-
-                —
-                {{ machine['name'] }}
-
-                <br>
-
-                {{ money(
-                    machine['purchase_amount']
-                ) }}
-
-                /
-
-                {{ machine['days'] }}
-                days
-
-
-                <form
-                    method="post"
-                    action="{{ url_for(
-                        'admin_toggle_machine',
-                        machine_id=machine['id']
-                    ) }}"
-                    style="margin-top:6px"
-                >
-
-                    <button
-                        class="btn secondary"
-                    >
-
-                        {% if machine['active'] %}
-                            Remove from Shop
-                        {% else %}
-                            Put in Shop
-                        {% endif %}
-
-                    </button>
-
-                </form>
-
-            </div>
-
-            {% endfor %}
-
-        </div>
-
-    </div>
-
-
-    <!-- ADMIN MANAGEMENT -->
-
-    <div
-        class="grid2"
-        style="margin-top:16px"
-    >
-
-        <div class="card">
-
-            <h2>
-                Manage Administrators
-            </h2>
-
-            <form
-                method="post"
-                action="{{ url_for(
-                    'admin_add_admin'
-                ) }}"
-            >
-
-                <input
-                    name="name"
-                    placeholder="Admin name"
-                >
-
-                <input
-                    name="phone"
-                    placeholder="Admin phone"
-                    required
-                >
-
-                <input
-                    name="password"
-                    type="password"
-                    placeholder="Admin password"
-                    required
-                >
-
-                <button class="btn">
-                    Add / Update Admin
-                </button>
-
-            </form>
-
-
-            {% for administrator in admins %}
-
-            <div class="notice">
-
-                <b>
-                    {{ administrator['name'] }}
-                </b>
-
-                <br>
-
-                {{ administrator['phone'] }}
-
-
-                {% if administrator['phone']
-                    != primary_admin_phone %}
-
-                <form
-                    method="post"
-                    action="{{ url_for(
-                        'admin_remove_admin',
-                        user_id=administrator['id']
-                    ) }}"
-                    style="margin-top:6px"
-                >
-
-                    <button
-                        class="btn danger"
-                    >
-                        Remove Admin
-                    </button>
-
-                </form>
-
-                {% else %}
-
-                <div class="small muted">
-                    Primary administrator
-                </div>
-
-                {% endif %}
-
-            </div>
-
-            {% endfor %}
-
-        </div>
-
-
-        <div class="card">
-
-            <h2>
-                Transaction Summary
-            </h2>
-
-            <p>
-                Approved deposits:
-                <b>
-                    {{ money(
-                        approved_deposits
-                    ) }}
-                </b>
-            </p>
-
-            <p>
-                Approved withdrawals:
-                <b>
-                    {{ money(
-                        approved_withdrawals
-                    ) }}
-                </b>
-            </p>
-
-            <p>
-                Pending deposits:
-                <b>
-                    {{ pending_deposits }}
-                </b>
-            </p>
-
-            <p>
-                Pending withdrawals:
-                <b>
-                    {{ pending_withdrawals }}
-                </b>
-            </p>
-
-            <p>
-                Registered users:
-                <b>
-                    {{ joined }}
-                </b>
-            </p>
-
-        </div>
-
-    </div>
-
-
-    <!-- CHAT -->
-
-    <div
-        class="card"
-        style="margin-top:16px"
-    >
-
-        <h2>
-            User Chat
-        </h2>
-
-        {% for chat_message in chats %}
-
-        <div class="notice">
-
-            <b>
-                {{ chat_message['name'] }}
-                ({{ chat_message['phone'] }})
-            </b>
-
-            <br>
-
-            {{ chat_message['message'] }}
-
-
-            <form
-                method="post"
-                action="{{ url_for(
-                    'admin_reply',
-                    user_id=chat_message['user_id']
-                ) }}"
-            >
-
-                <input
-                    name="message"
-                    placeholder="Reply"
-                    required
-                >
-
-                <button class="btn">
-                    Reply
-                </button>
-
-            </form>
-
-        </div>
-
-        {% else %}
-
-        <p class="muted">
-            No user messages.
+def admin_panel():
+
+    users_count = User.query.count()
+
+    joined_today = User.query.filter(
+        User.created_at >= (
+            utc_now() - timedelta(days=1)
+        )
+    ).count()
+
+    deposits_pending = Deposit.query.filter_by(
+        status="pending"
+    ).count()
+
+    withdrawals_pending = Withdrawal.query.filter_by(
+        status="pending"
+    ).count()
+
+    total_deposits = db.session.query(
+        db.func.coalesce(
+            db.func.sum(Deposit.amount),
+            0
+        )
+    ).filter(
+        Deposit.status == "approved"
+    ).scalar()
+
+    total_withdrawals = db.session.query(
+        db.func.coalesce(
+            db.func.sum(Withdrawal.net_amount),
+            0
+        )
+    ).filter(
+        Withdrawal.status == "approved"
+    ).scalar()
+
+    content = """
+    <section class="hero">
+        <h1>Admin Panel</h1>
+        <p>
+            DATA4MINE administration dashboard.
         </p>
+    </section>
 
-        {% endfor %}
+    <div class="stats">
+
+        <div class="stat">
+            Joined
+            <strong>
+                {{ users_count }}
+            </strong>
+        </div>
+
+        <div class="stat">
+            Joined Last 24h
+            <strong>
+                {{ joined_today }}
+            </strong>
+        </div>
+
+        <div class="stat">
+            Pending Deposits
+            <strong>
+                {{ deposits_pending }}
+            </strong>
+        </div>
+
+        <div class="stat">
+            Pending Withdrawals
+            <strong>
+                {{ withdrawals_pending }}
+            </strong>
+        </div>
+
+        <div class="stat">
+            Approved Deposits
+            <strong>
+                {{ money(total_deposits) }}
+            </strong>
+        </div>
+
+        <div class="stat">
+            Approved Withdrawals
+            <strong>
+                {{ money(total_withdrawals) }}
+            </strong>
+        </div>
+
+    </div>
+
+    <div class="grid">
+
+        <a class="card"
+           href="{{ url_for('admin_deposits') }}">
+            <h2>💰 Deposits</h2>
+            <p>
+                Verify and approve deposits.
+            </p>
+        </a>
+
+        <a class="card"
+           href="{{ url_for('admin_withdrawals') }}">
+            <h2>💸 Withdrawals</h2>
+            <p>
+                Process withdrawals.
+            </p>
+        </a>
+
+        <a class="card"
+           href="{{ url_for('admin_machines') }}">
+            <h2>🏭 Machines</h2>
+            <p>
+                Add, edit and remove machines.
+            </p>
+        </a>
+
+        <a class="card"
+           href="{{ url_for('admin_deposit_numbers') }}">
+            <h2>📱 Deposit Numbers</h2>
+            <p>
+                Manage payment numbers.
+            </p>
+        </a>
+
+        <a class="card"
+           href="{{ url_for('admin_users') }}">
+            <h2>👥 Users & Admins</h2>
+            <p>
+                Manage accounts and administrators.
+            </p>
+        </a>
+
+        <a class="card"
+           href="{{ url_for('admin_notifications') }}">
+            <h2>🔔 Notifications</h2>
+            <p>
+                Send updates to users.
+            </p>
+        </a>
+
+        <a class="card"
+           href="{{ url_for('admin_chat') }}">
+            <h2>💬 User Chat</h2>
+            <p>
+                Reply to users.
+            </p>
+        </a>
+
+        <a class="card"
+           href="{{ url_for('admin_chart') }}">
+            <h2>📊 Statistics</h2>
+            <p>
+                Deposit, withdrawal and joiner rates.
+            </p>
+        </a>
 
     </div>
     """
 
-    return render_page(
-        "Admin",
+    return page(
+        "Admin Panel",
         render_template_string(
-            body,
-            joined=joined,
-            approved_deposits=approved_deposits,
-            approved_withdrawals=approved_withdrawals,
-            pending_deposits=pending_deposits,
-            pending_withdrawals=pending_withdrawals,
-            deposit_numbers=deposit_numbers,
-            machines=machines,
-            admins=admins,
-            chats=chats,
-            deposit_rate=deposit_rate,
-            withdrawal_rate=withdrawal_rate,
-            growth_rate=growth_rate,
-            pending_deposit_rows=pending_deposit_rows,
-            pending_withdrawal_rows=pending_withdrawal_rows,
-            primary_admin_phone=ADMIN_PHONE,
-            money=money,
-        ),
+            content,
+            users_count=users_count,
+            joined_today=joined_today,
+            deposits_pending=deposits_pending,
+            withdrawals_pending=withdrawals_pending,
+            total_deposits=total_deposits,
+            total_withdrawals=total_withdrawals,
+            money=format_money
+        )
     )
 
 
 # ============================================================
-# APPROVE DEPOSIT
+# ADMIN DEPOSITS
 # ============================================================
 
 @app.route(
-    "/admin/deposit/<int:deposit_id>/approve",
-    methods=["POST"]
+    "/admin/deposits",
+    methods=["GET", "POST"]
 )
 @admin_required
-def approve_deposit(deposit_id):
+def admin_deposits():
 
-    connection = db()
+    if request.method == "POST":
 
-    deposit = connection.execute(
-        """
-        SELECT *
-        FROM deposits
-        WHERE id = ?
-        AND status = 'pending'
-        """,
-        (
-            deposit_id,
-        ),
-    ).fetchone()
-
-    if deposit:
-
-        connection.execute(
-            """
-            UPDATE deposits
-
-            SET
-                status = 'approved',
-                approved_at = ?
-
-            WHERE id = ?
-            """,
-            (
-                now(),
-                deposit_id,
-            ),
+        deposit_id = request.form.get(
+            "deposit_id"
         )
 
-        connection.execute(
-            """
-            UPDATE users
-
-            SET
-                balance =
-                    balance + ?,
-
-                total_deposited =
-                    total_deposited + ?
-
-            WHERE id = ?
-            """,
-            (
-                deposit["amount"],
-                deposit["amount"],
-                deposit["user_id"],
-            ),
+        action = request.form.get(
+            "action"
         )
 
-        connection.commit()
-
-        flash(
-            "Deposit approved and balance updated.",
-            "success",
-        )
-
-    connection.close()
-
-    return redirect(
-        url_for("admin")
-    )
-
-
-# ============================================================
-# REJECT DEPOSIT
-# ============================================================
-
-@app.route(
-    "/admin/deposit/<int:deposit_id>/reject",
-    methods=["POST"]
-)
-@admin_required
-def reject_deposit(deposit_id):
-
-    connection = db()
-
-    connection.execute(
-        """
-        UPDATE deposits
-
-        SET
-            status = 'rejected',
-            approved_at = ?
-
-        WHERE id = ?
-        AND status = 'pending'
-        """,
-        (
-            now(),
-            deposit_id,
-        ),
-    )
-
-    connection.commit()
-    connection.close()
-
-    flash(
-        "Deposit rejected.",
-        "warning",
-    )
-
-    return redirect(
-        url_for("admin")
-    )
-
-
-# ============================================================
-# APPROVE WITHDRAWAL
-# ============================================================
-
-@app.route(
-    "/admin/withdraw/<int:withdrawal_id>/approve",
-    methods=["POST"]
-)
-@admin_required
-def approve_withdrawal(
-    withdrawal_id
-):
-
-    connection = db()
-
-    withdrawal = connection.execute(
-        """
-        SELECT *
-        FROM withdrawals
-        WHERE id = ?
-        AND status = 'pending'
-        """,
-        (
-            withdrawal_id,
-        ),
-    ).fetchone()
-
-    if not withdrawal:
-
-        connection.close()
-
-        flash(
-            "Withdrawal not found or already processed.",
-            "error",
-        )
-
-        return redirect(
-            url_for("admin")
-        )
-
-    user = connection.execute(
-        """
-        SELECT balance
-        FROM users
-        WHERE id = ?
-        """,
-        (
-            withdrawal["user_id"],
-        ),
-    ).fetchone()
-
-    if (
-        not user
-        or user["balance"]
-        < withdrawal["amount"]
-    ):
-
-        connection.close()
-
-        flash(
-            "Cannot approve: user's current balance is insufficient.",
-            "error",
-        )
-
-        return redirect(
-            url_for("admin")
-        )
-
-    connection.execute(
-        """
-        UPDATE users
-
-        SET
-            balance =
-                balance - ?,
-
-            total_withdrawn =
-                total_withdrawn + ?
-
-        WHERE id = ?
-        """,
-        (
-            withdrawal["amount"],
-            withdrawal["net_amount"],
-            withdrawal["user_id"],
-        ),
-    )
-
-    connection.execute(
-        """
-        UPDATE withdrawals
-
-        SET
-            status = 'approved',
-            approved_at = ?
-
-        WHERE id = ?
-        """,
-        (
-            now(),
-            withdrawal_id,
-        ),
-    )
-
-    connection.commit()
-    connection.close()
-
-    flash(
-        "Withdrawal approved.",
-        "success",
-    )
-
-    return redirect(
-        url_for("admin")
-    )
-
-
-# ============================================================
-# REJECT WITHDRAWAL
-# ============================================================
-
-@app.route(
-    "/admin/withdraw/<int:withdrawal_id>/reject",
-    methods=["POST"]
-)
-@admin_required
-def reject_withdrawal(
-    withdrawal_id
-):
-
-    connection = db()
-
-    connection.execute(
-        """
-        UPDATE withdrawals
-
-        SET
-            status = 'rejected',
-            approved_at = ?
-
-        WHERE id = ?
-        AND status = 'pending'
-        """,
-        (
-            now(),
-            withdrawal_id,
-        ),
-    )
-
-    connection.commit()
-    connection.close()
-
-    flash(
-        "Withdrawal rejected. No balance was deducted.",
-        "warning",
-    )
-
-    return redirect(
-        url_for("admin")
-    )
-
-
-# ============================================================
-# ADD DEPOSIT NUMBER
-# ============================================================
-
-@app.route(
-    "/admin/deposit-number/add",
-    methods=["POST"]
-)
-@admin_required
-def admin_add_deposit_number():
-
-    number = normalize_phone(
-        request.form.get(
-            "number"
-        )
-    )
-
-    owner = request.form.get(
-        "owner_name",
-        "",
-    ).strip()
-
-    connection = db()
-
-    try:
-
-        connection.execute(
-            """
-            INSERT INTO deposit_numbers (
-                number,
-                owner_name,
-                active,
-                created_at
-            )
-            VALUES (?, ?, 1, ?)
-            """,
-            (
-                number,
-                owner,
-                now(),
-            ),
-        )
-
-        connection.commit()
-
-        flash(
-            "Deposit number added.",
-            "success",
-        )
-
-    except sqlite3.IntegrityError:
-
-        flash(
-            "That deposit number already exists.",
-            "error",
-        )
-
-    finally:
-
-        connection.close()
-
-    return redirect(
-        url_for("admin")
-    )
-
-
-# ============================================================
-# REMOVE DEPOSIT NUMBER
-# ============================================================
-
-@app.route(
-    "/admin/deposit-number/<int:number_id>/remove",
-    methods=["POST"]
-)
-@admin_required
-def admin_remove_deposit_number(
-    number_id
-):
-
-    connection = db()
-
-    connection.execute(
-        """
-        UPDATE deposit_numbers
-
-        SET active = 0
-
-        WHERE id = ?
-        """,
-        (
-            number_id,
-        ),
-    )
-
-    connection.commit()
-    connection.close()
-
-    flash(
-        "Deposit number removed from the active list.",
-        "success",
-    )
-
-    return redirect(
-        url_for("admin")
-    )
-
-
-# ============================================================
-# ADD MACHINE
-# ============================================================
-
-@app.route(
-    "/admin/machine/add",
-    methods=["POST"]
-)
-@admin_required
-def admin_add_machine():
-
-    connection = None
-
-    try:
-
-        code = (
-            request.form.get(
-                "code",
-                "",
-            )
-            .strip()
-            .upper()
-        )
-
-        name = request.form.get(
-            "name",
-            "",
+        note = request.form.get(
+            "note",
+            ""
         ).strip()
 
-        purchase_amount = int(
-            request.form.get(
-                "purchase_amount",
-                0,
-            )
+        deposit_record = db.session.get(
+            Deposit,
+            int(deposit_id)
         )
 
-        payout_amount = int(
-            request.form.get(
-                "payout_amount",
-                0,
+        if deposit_record is None:
+            flash(
+                "Deposit not found.",
+                "error"
             )
-        )
 
-        days = int(
-            request.form.get(
-                "days",
-                0,
+            return redirect(
+                url_for("admin_deposits")
             )
-        )
 
-        reward = int(
-            request.form.get(
-                "buyer_reward",
-                0,
+        if deposit_record.status != "pending":
+            flash(
+                "This deposit has already been processed.",
+                "error"
             )
-        )
 
-        image = Path(
-            request.form.get(
-                "image",
-                "m1.jpg",
+            return redirect(
+                url_for("admin_deposits")
             )
-        ).name
 
-        if (
-            not code
-            or not name
-            or purchase_amount <= 0
-            or payout_amount <= 0
-            or days <= 0
-            or reward < 0
-        ):
+        if action == "approve":
 
-            raise ValueError
+            deposit_record.status = "approved"
+            deposit_record.admin_note = note
+            deposit_record.processed_at = utc_now()
 
-        connection = db()
-
-        connection.execute(
-            """
-            INSERT INTO machines (
-                code,
-                name,
-                purchase_amount,
-                payout_amount,
-                days,
-                buyer_reward,
-                image,
-                active,
-                created_at
+            deposit_record.user.balance += (
+                deposit_record.amount
             )
-            VALUES (
-                ?, ?, ?, ?, ?, ?, ?, 1, ?
-            )
-            """,
-            (
-                code,
-                name,
-                purchase_amount,
-                payout_amount,
-                days,
-                reward,
-                image,
-                now(),
-            ),
-        )
 
-        connection.commit()
+            db.session.add(
+                ChatMessage(
+                    user_id=deposit_record.user_id,
+                    sender="admin",
+                    message=(
+                        "Your deposit of "
+                        + format_money(deposit_record.amount)
+                        + " has been approved."
+                    )
+                )
+            )
+
+        elif action == "reject":
+
+            deposit_record.status = "rejected"
+            deposit_record.admin_note = note
+            deposit_record.processed_at = utc_now()
+
+            db.session.add(
+                ChatMessage(
+                    user_id=deposit_record.user_id,
+                    sender="admin",
+                    message=(
+                        "Your deposit of "
+                        + format_money(deposit_record.amount)
+                        + " was rejected."
+                    )
+                )
+            )
+
+        db.session.commit()
 
         flash(
-            "Machine added to shop.",
-            "success",
-        )
-
-    except (
-        ValueError,
-        sqlite3.IntegrityError,
-    ):
-
-        flash(
-            "Machine could not be added. Check the values and make sure the machine code is unique.",
-            "error",
-        )
-
-    finally:
-
-        if connection is not None:
-            connection.close()
-
-    return redirect(
-        url_for("admin")
-    )
-
-
-# ============================================================
-# ENABLE / DISABLE MACHINE
-# ============================================================
-
-@app.route(
-    "/admin/machine/<int:machine_id>/toggle",
-    methods=["POST"]
-)
-@admin_required
-def admin_toggle_machine(
-    machine_id
-):
-
-    connection = db()
-
-    connection.execute(
-        """
-        UPDATE machines
-
-        SET active =
-            CASE active
-                WHEN 1 THEN 0
-                ELSE 1
-            END
-
-        WHERE id = ?
-        """,
-        (
-            machine_id,
-        ),
-    )
-
-    connection.commit()
-    connection.close()
-
-    return redirect(
-        url_for("admin")
-    )
-
-
-# ============================================================
-# ADD NOTIFICATION
-# ============================================================
-
-@app.route(
-    "/admin/notification",
-    methods=["POST"]
-)
-@admin_required
-def admin_notification():
-
-    title = request.form.get(
-        "title",
-        "",
-    ).strip()
-
-    message = request.form.get(
-        "message",
-        "",
-    ).strip()
-
-    connection = db()
-
-    if title and message:
-
-        connection.execute(
-            """
-            INSERT INTO notifications (
-                title,
-                message,
-                created_at
-            )
-            VALUES (?, ?, ?)
-            """,
-            (
-                title,
-                message,
-                now(),
-            ),
-        )
-
-        connection.commit()
-
-        flash(
-            "Notification published.",
-            "success",
-        )
-
-    connection.close()
-
-    return redirect(
-        url_for("admin")
-    )
-
-
-# ============================================================
-# ADMIN REPLY
-# ============================================================
-
-@app.route(
-    "/admin/reply/<int:user_id>",
-    methods=["POST"]
-)
-@admin_required
-def admin_reply(user_id):
-
-    message = request.form.get(
-        "message",
-        "",
-    ).strip()
-
-    connection = db()
-
-    if message:
-
-        connection.execute(
-            """
-            INSERT INTO chats (
-                user_id,
-                message,
-                from_admin,
-                created_at
-            )
-            VALUES (?, ?, 1, ?)
-            """,
-            (
-                user_id,
-                message,
-                now(),
-            ),
-        )
-
-        connection.commit()
-
-        flash(
-            "Reply sent.",
-            "success",
-        )
-
-    connection.close()
-
-    return redirect(
-        url_for("admin")
-    )
-
-
-# ============================================================
-# ADD / UPDATE ADMIN
-# ============================================================
-
-@app.route(
-    "/admin/add-admin",
-    methods=["POST"]
-)
-@admin_required
-def admin_add_admin():
-
-    phone = normalize_phone(
-        request.form.get(
-            "phone"
-        )
-    )
-
-    password = request.form.get(
-        "password",
-        "",
-    )
-
-    name = (
-        request.form.get(
-            "name",
-            "",
-        ).strip()
-        or "Administrator"
-    )
-
-    if (
-        len(phone) < 9
-        or len(password) < 6
-    ):
-
-        flash(
-            "Enter a valid admin phone number and password of at least 6 characters.",
-            "error",
+            "Deposit updated.",
+            "success"
         )
 
         return redirect(
-            url_for("admin")
+            url_for("admin_deposits")
         )
 
-    connection = db()
+    deposits = Deposit.query.order_by(
+        Deposit.created_at.desc()
+    ).all()
 
-    try:
+    content = """
+    <section class="hero">
+        <h1>Deposit Management</h1>
+    </section>
 
-        existing = connection.execute(
-            """
-            SELECT id
-            FROM users
-            WHERE phone = ?
-            """,
-            (
-                phone,
-            ),
-        ).fetchone()
+    <div class="card">
 
-        if existing:
+    <div class="table-wrap">
 
-            connection.execute(
-                """
-                UPDATE users
+    <table>
 
-                SET
-                    is_admin = 1,
-                    name = ?,
-                    password_hash = ?
+    <tr>
+        <th>User</th>
+        <th>Amount</th>
+        <th>Number</th>
+        <th>Transaction Message</th>
+        <th>Status</th>
+        <th>Action</th>
+    </tr>
 
-                WHERE phone = ?
-                """,
-                (
-                    name,
-                    generate_password_hash(
-                        password
-                    ),
-                    phone,
-                ),
+    {% for item in deposits %}
+
+    <tr>
+
+        <td>
+            {{ item.user.phone }}
+        </td>
+
+        <td>
+            {{ money(item.amount) }}
+        </td>
+
+        <td>
+            {{ item.deposit_number }}
+        </td>
+
+        <td style="max-width:350px;">
+            <pre style="white-space:pre-wrap;">
+{{ item.transaction_message }}
+            </pre>
+        </td>
+
+        <td>
+            {{ item.status }}
+        </td>
+
+        <td>
+
+        {% if item.status == "pending" %}
+
+        <form method="POST">
+
+            <input type="hidden"
+                   name="deposit_id"
+                   value="{{ item.id }}">
+
+            <input name="note"
+                   placeholder="Admin note">
+
+            <button
+                class="btn"
+                name="action"
+                value="approve">
+                Approve
+            </button>
+
+            <button
+                class="btn danger"
+                name="action"
+                value="reject">
+                Reject
+            </button>
+
+        </form>
+
+        {% else %}
+
+            Processed:
+            {{ item.processed_at }}
+
+        {% endif %}
+
+        </td>
+
+    </tr>
+
+    {% else %}
+
+    <tr>
+        <td colspan="6">
+            No deposits.
+        </td>
+    </tr>
+
+    {% endfor %}
+
+    </table>
+
+    </div>
+
+    </div>
+    """
+
+    return page(
+        "Admin Deposits",
+        render_template_string(
+            content,
+            deposits=deposits,
+            money=format_money
+        )
+    )
+
+
+# ============================================================
+# ADMIN WITHDRAWALS
+# ============================================================
+
+@app.route(
+    "/admin/withdrawals",
+    methods=["GET", "POST"]
+)
+@admin_required
+def admin_withdrawals():
+
+    if request.method == "POST":
+
+        withdrawal_id = request.form.get(
+            "withdrawal_id"
+        )
+
+        action = request.form.get(
+            "action"
+        )
+
+        note = request.form.get(
+            "note",
+            ""
+        ).strip()
+
+        withdrawal = db.session.get(
+            Withdrawal,
+            int(withdrawal_id)
+        )
+
+        if withdrawal is None:
+            flash(
+                "Withdrawal not found.",
+                "error"
             )
 
-        else:
+            return redirect(
+                url_for("admin_withdrawals")
+            )
 
-            referral_code = make_referral_code()
+        if withdrawal.status != "pending":
+            flash(
+                "This withdrawal is already processed.",
+                "error"
+            )
 
-            while connection.execute(
-                """
-                SELECT id
-                FROM users
-                WHERE referral_code = ?
-                """,
-                (
-                    referral_code,
+            return redirect(
+                url_for("admin_withdrawals")
+            )
+
+        # 24-hour waiting period.
+        if utc_now() < withdrawal.available_at:
+
+            flash(
+                "The 24-hour withdrawal processing period has not completed yet.",
+                "error"
+            )
+
+            return redirect(
+                url_for("admin_withdrawals")
+            )
+
+        if action == "approve":
+
+            withdrawal.status = "approved"
+            withdrawal.processed_at = utc_now()
+            withdrawal.admin_note = note
+
+            db.session.add(
+                ChatMessage(
+                    user_id=withdrawal.user_id,
+                    sender="admin",
+                    message=(
+                        "Your withdrawal has been approved. "
+                        "Net amount: "
+                        + format_money(
+                            withdrawal.net_amount
+                        )
+                    )
+                )
+            )
+
+        elif action == "reject":
+
+            withdrawal.status = "rejected"
+            withdrawal.processed_at = utc_now()
+            withdrawal.admin_note = note
+
+            # Return reserved amount.
+            withdrawal.user.balance += (
+                withdrawal.amount
+            )
+
+            db.session.add(
+                ChatMessage(
+                    user_id=withdrawal.user_id,
+                    sender="admin",
+                    message=(
+                        "Your withdrawal of "
+                        + format_money(
+                            withdrawal.amount
+                        )
+                        + " was rejected. "
+                        "The reserved balance has been returned."
+                    )
+                )
+            )
+
+        db.session.commit()
+
+        flash(
+            "Withdrawal updated.",
+            "success"
+        )
+
+        return redirect(
+            url_for("admin_withdrawals")
+        )
+
+    withdrawals = Withdrawal.query.order_by(
+        Withdrawal.created_at.desc()
+    ).all()
+
+    content = """
+    <section class="hero">
+        <h1>Withdrawal Management</h1>
+    </section>
+
+    <div class="card">
+
+    <div class="table-wrap">
+
+    <table>
+
+    <tr>
+        <th>User</th>
+        <th>Amount</th>
+        <th>Tax</th>
+        <th>Net</th>
+        <th>Name</th>
+        <th>Number</th>
+        <th>Status</th>
+        <th>Action</th>
+    </tr>
+
+    {% for item in withdrawals %}
+
+    <tr>
+
+        <td>
+            {{ item.user.phone }}
+        </td>
+
+        <td>
+            {{ money(item.amount) }}
+        </td>
+
+        <td>
+            {{ money(item.tax) }}
+        </td>
+
+        <td>
+            {{ money(item.net_amount) }}
+        </td>
+
+        <td>
+            {{ item.account_name }}
+        </td>
+
+        <td>
+            {{ item.account_number }}
+        </td>
+
+        <td>
+            {{ item.status }}
+
+            {% if item.status == "pending" %}
+
+            <br>
+
+            {% if item.seconds_remaining > 0 %}
+
+                <span
+                  data-countdown="{{ item.seconds_remaining }}">
+                </span>
+
+            {% else %}
+
+                Ready
+
+            {% endif %}
+
+            {% endif %}
+
+        </td>
+
+        <td>
+
+        {% if item.status == "pending" %}
+
+        <form method="POST">
+
+            <input type="hidden"
+                   name="withdrawal_id"
+                   value="{{ item.id }}">
+
+            <input name="note"
+                   placeholder="Admin note">
+
+            <button
+                class="btn"
+                name="action"
+                value="approve"
+                {% if item.seconds_remaining > 0 %}
+                disabled
+                {% endif %}>
+                Approve
+            </button>
+
+            <button
+                class="btn danger"
+                name="action"
+                value="reject">
+                Reject
+            </button>
+
+        </form>
+
+        {% else %}
+
+            Processed:
+            {{ item.processed_at }}
+
+        {% endif %}
+
+        </td>
+
+    </tr>
+
+    {% else %}
+
+    <tr>
+        <td colspan="8">
+            No withdrawals.
+        </td>
+    </tr>
+
+    {% endfor %}
+
+    </table>
+
+    </div>
+
+    </div>
+
+    <script>
+
+    setInterval(function() {
+
+        document.querySelectorAll(
+            "[data-countdown]"
+        ).forEach(function(el) {
+
+            let s =
+                parseInt(
+                    el.getAttribute(
+                        "data-countdown"
+                    )
+                );
+
+            if (s <= 0) {
+                el.textContent =
+                    "Ready";
+                return;
+            }
+
+            const h =
+                Math.floor(
+                    s / 3600
+                );
+
+            const m =
+                Math.floor(
+                    (s % 3600) / 60
+                );
+
+            const sec =
+                s % 60;
+
+            el.textContent =
+                h + "h " +
+                m + "m " +
+                sec + "s remaining";
+
+            el.setAttribute(
+                "data-countdown",
+                s - 1
+            );
+
+        });
+
+    }, 1000);
+
+    </script>
+    """
+
+    return page(
+        "Admin Withdrawals",
+        render_template_string(
+            content,
+            withdrawals=withdrawals,
+            money=format_money
+        )
+    )
+
+
+# ============================================================
+# ADMIN DEPOSIT NUMBERS
+# ============================================================
+
+@app.route(
+    "/admin/deposit-numbers",
+    methods=["GET", "POST"]
+)
+@admin_required
+def admin_deposit_numbers():
+
+    if request.method == "POST":
+
+        action = request.form.get(
+            "action"
+        )
+
+        if action == "add":
+
+            number = request.form.get(
+                "number",
+                ""
+            ).strip()
+
+            owner_name = request.form.get(
+                "owner_name",
+                ""
+            ).strip()
+
+            if number:
+
+                db.session.add(
+                    DepositNumber(
+                        number=number,
+                        owner_name=owner_name,
+                        active=True
+                    )
+                )
+
+                db.session.commit()
+
+                flash(
+                    "Deposit number added.",
+                    "success"
+                )
+
+        elif action == "toggle":
+
+            number_id = int(
+                request.form.get(
+                    "number_id"
+                )
+            )
+
+            item = db.session.get(
+                DepositNumber,
+                number_id
+            )
+
+            if item:
+
+                item.active = not item.active
+
+                db.session.commit()
+
+        elif action == "delete":
+
+            number_id = int(
+                request.form.get(
+                    "number_id"
+                )
+            )
+
+            item = db.session.get(
+                DepositNumber,
+                number_id
+            )
+
+            if item:
+
+                db.session.delete(
+                    item
+                )
+
+                db.session.commit()
+
+    numbers = DepositNumber.query.order_by(
+        DepositNumber.id.desc()
+    ).all()
+
+    content = """
+    <section class="hero">
+        <h1>Deposit Numbers</h1>
+    </section>
+
+    <div class="grid">
+
+        <div class="card">
+
+            <h2>Add Number</h2>
+
+            <form class="form"
+                  method="POST">
+
+                <input type="hidden"
+                       name="action"
+                       value="add">
+
+                <label>
+                    Owner Name
+                </label>
+
+                <input
+                    name="owner_name"
+                    required>
+
+                <label>
+                    Deposit Number
+                </label>
+
+                <input
+                    name="number"
+                    required>
+
+                <button class="btn"
+                        type="submit">
+                    Add Number
+                </button>
+
+            </form>
+
+        </div>
+
+        <div class="card">
+
+            <h2>Existing Numbers</h2>
+
+            {% for item in numbers %}
+
+            <div class="alert">
+
+                <strong>
+                    {{ item.owner_name }}
+                </strong>
+
+                <br>
+
+                {{ item.number }}
+
+                <br>
+
+                Status:
+                {{ "Active" if item.active else "Disabled" }}
+
+                <br><br>
+
+                <form method="POST"
+                      style="display:inline;">
+
+                    <input type="hidden"
+                           name="action"
+                           value="toggle">
+
+                    <input type="hidden"
+                           name="number_id"
+                           value="{{ item.id }}">
+
+                    <button class="btn secondary">
+                        Toggle
+                    </button>
+
+                </form>
+
+                <form method="POST"
+                      style="display:inline;">
+
+                    <input type="hidden"
+                           name="action"
+                           value="delete">
+
+                    <input type="hidden"
+                           name="number_id"
+                           value="{{ item.id }}">
+
+                    <button class="btn danger">
+                        Delete
+                    </button>
+
+                </form>
+
+            </div>
+
+            {% else %}
+
+            <p>
+                No deposit numbers.
+            </p>
+
+            {% endfor %}
+
+        </div>
+
+    </div>
+    """
+
+    return page(
+        "Deposit Numbers",
+        render_template_string(
+            content,
+            numbers=numbers
+        )
+    )
+
+
+# ============================================================
+# ADMIN MACHINE MANAGEMENT
+# ============================================================
+
+@app.route(
+    "/admin/machines",
+    methods=["GET", "POST"]
+)
+@admin_required
+def admin_machines():
+
+    if request.method == "POST":
+
+        action = request.form.get(
+            "action"
+        )
+
+        # ----------------------------------------------------
+        # ADD MACHINE
+        # ----------------------------------------------------
+        if action == "add":
+
+            name = request.form.get(
+                "name",
+                ""
+            ).strip()
+
+            description = request.form.get(
+                "description",
+                ""
+            ).strip()
+
+            try:
+                price = float(
+                    request.form.get(
+                        "price",
+                        0
+                    )
+                )
+
+                daily_profit = float(
+                    request.form.get(
+                        "daily_profit",
+                        0
+                    )
+                )
+
+                duration_days = int(
+                    request.form.get(
+                        "duration_days",
+                        20
+                    )
+                )
+
+                stock = int(
+                    request.form.get(
+                        "stock",
+                        0
+                    )
+                )
+
+            except Exception:
+
+                flash(
+                    "Invalid machine values.",
+                    "error"
+                )
+
+                return redirect(
+                    url_for("admin_machines")
+                )
+
+            if not name:
+                flash(
+                    "Machine name is required.",
+                    "error"
+                )
+
+                return redirect(
+                    url_for("admin_machines")
+                )
+
+            image = request.files.get(
+                "image"
+            )
+
+            filename = None
+
+            if image and image.filename:
+
+                if not allowed_image(
+                    image.filename
+                ):
+
+                    flash(
+                        "Invalid image type.",
+                        "error"
+                    )
+
+                    return redirect(
+                        url_for("admin_machines")
+                    )
+
+                original = secure_filename(
+                    image.filename
+                )
+
+                extension = original.rsplit(
+                    ".",
+                    1
+                )[1].lower()
+
+                filename = (
+                    uuid.uuid4().hex
+                    + "."
+                    + extension
+                )
+
+                image.save(
+                    os.path.join(
+                        MACHINE_DIR,
+                        filename
+                    )
+                )
+
+            machine = Machine(
+                name=name,
+                description=description,
+                price=price,
+                daily_profit=daily_profit,
+                duration_days=max(
+                    1,
+                    duration_days
                 ),
-            ).fetchone():
-
-                referral_code = make_referral_code()
-
-            connection.execute(
-                """
-                INSERT INTO users (
-                    phone,
-                    name,
-                    password_hash,
-                    referral_code,
-                    referred_by,
-                    referral_reward_paid,
-                    created_at,
-                    is_admin
-                )
-                VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, 1
-                )
-                """,
-                (
-                    phone,
-                    name,
-                    generate_password_hash(
-                        password
-                    ),
-                    referral_code,
-                    None,
+                stock=max(
                     0,
-                    now(),
+                    stock
                 ),
+                image_filename=filename,
+                active=True
             )
 
-        connection.commit()
+            db.session.add(
+                machine
+            )
 
-        flash(
-            "Administrator added or updated.",
-            "success",
+            db.session.commit()
+
+            flash(
+                "Machine added successfully. It is now available in the shop.",
+                "success"
+            )
+
+            return redirect(
+                url_for("admin_machines")
+            )
+
+        # ----------------------------------------------------
+        # TOGGLE
+        # ----------------------------------------------------
+        elif action == "toggle":
+
+            machine_id = int(
+                request.form.get(
+                    "machine_id"
+                )
+            )
+
+            machine = db.session.get(
+                Machine,
+                machine_id
+            )
+
+            if machine:
+
+                machine.active = not machine.active
+
+                db.session.commit()
+
+        # ----------------------------------------------------
+        # DELETE
+        # ----------------------------------------------------
+        elif action == "delete":
+
+            machine_id = int(
+                request.form.get(
+                    "machine_id"
+                )
+            )
+
+            machine = db.session.get(
+                Machine,
+                machine_id
+            )
+
+            if machine:
+
+                if machine.purchases:
+
+                    flash(
+                        "This machine has purchase records and cannot be deleted. Disable it instead.",
+                        "error"
+                    )
+
+                else:
+
+                    if machine.image_filename:
+
+                        image_path = os.path.join(
+                            MACHINE_DIR,
+                            machine.image_filename
+                        )
+
+                        if os.path.exists(
+                            image_path
+                        ):
+                            os.remove(
+                                image_path
+                            )
+
+                    db.session.delete(
+                        machine
+                    )
+
+                    db.session.commit()
+
+        # ----------------------------------------------------
+        # UPDATE
+        # ----------------------------------------------------
+        elif action == "update":
+
+            machine_id = int(
+                request.form.get(
+                    "machine_id"
+                )
+            )
+
+            machine = db.session.get(
+                Machine,
+                machine_id
+            )
+
+            if machine:
+
+                machine.name = request.form.get(
+                    "name",
+                    machine.name
+                ).strip()
+
+                machine.description = request.form.get(
+                    "description",
+                    machine.description
+                ).strip()
+
+                machine.price = float(
+                    request.form.get(
+                        "price",
+                        machine.price
+                    )
+                )
+
+                machine.daily_profit = float(
+                    request.form.get(
+                        "daily_profit",
+                        machine.daily_profit
+                    )
+                )
+
+                machine.duration_days = max(
+                    1,
+                    int(
+                        request.form.get(
+                            "duration_days",
+                            machine.duration_days
+                        )
+                    )
+                )
+
+                machine.stock = max(
+                    0,
+                    int(
+                        request.form.get(
+                            "stock",
+                            machine.stock
+                        )
+                    )
+                )
+
+                image = request.files.get(
+                    "image"
+                )
+
+                if image and image.filename:
+
+                    if allowed_image(
+                        image.filename
+                    ):
+
+                        if machine.image_filename:
+
+                            old_path = os.path.join(
+                                MACHINE_DIR,
+                                machine.image_filename
+                            )
+
+                            if os.path.exists(
+                                old_path
+                            ):
+                                os.remove(
+                                    old_path
+                                )
+
+                        original = secure_filename(
+                            image.filename
+                        )
+
+                        extension = original.rsplit(
+                            ".",
+                            1
+                        )[1].lower()
+
+                        filename = (
+                            uuid.uuid4().hex
+                            + "."
+                            + extension
+                        )
+
+                        image.save(
+                            os.path.join(
+                                MACHINE_DIR,
+                                filename
+                            )
+                        )
+
+                        machine.image_filename = filename
+
+                db.session.commit()
+
+                flash(
+                    "Machine updated.",
+                    "success"
+                )
+
+    machines = Machine.query.order_by(
+        Machine.id.desc()
+    ).all()
+
+    content = """
+    <section class="hero">
+        <h1>Machine Management</h1>
+        <p>
+            Machines added here are immediately loaded from the database
+            and displayed in the Shop when active and in stock.
+        </p>
+    </section>
+
+    <div class="card">
+
+        <h2>Add Machine</h2>
+
+        <form class="form"
+              method="POST"
+              enctype="multipart/form-data">
+
+            <input type="hidden"
+                   name="action"
+                   value="add">
+
+            <label>
+                Machine Name
+            </label>
+
+            <input
+                name="name"
+                required
+                placeholder="Diamond Miner">
+
+            <label>
+                Description
+            </label>
+
+            <textarea
+                name="description"></textarea>
+
+            <label>
+                Price (UGX)
+            </label>
+
+            <input
+                type="number"
+                name="price"
+                min="0"
+                step="1"
+                required>
+
+            <label>
+                Daily Profit (UGX)
+            </label>
+
+            <input
+                type="number"
+                name="daily_profit"
+                min="0"
+                step="1"
+                required>
+
+            <label>
+                Duration (days)
+            </label>
+
+            <input
+                type="number"
+                name="duration_days"
+                min="1"
+                value="20"
+                required>
+
+            <label>
+                Stock
+            </label>
+
+            <input
+                type="number"
+                name="stock"
+                min="0"
+                value="10"
+                required>
+
+            <label>
+                Machine Image
+            </label>
+
+            <input
+                type="file"
+                name="image"
+                accept=".jpg,.jpeg,.png,.webp,.gif">
+
+            <p class="muted small">
+                Uploaded images are stored automatically in:
+                static/machines/
+            </p>
+
+            <button class="btn"
+                    type="submit">
+                Add Machine
+            </button>
+
+        </form>
+
+    </div>
+
+    <br>
+
+    <div class="grid">
+
+    {% for machine in machines %}
+
+        <div class="card">
+
+            {% if machine.image_filename %}
+
+                <img
+                  class="machine-image"
+                  src="{{ url_for(
+                      'machine_image',
+                      filename=machine.image_filename
+                  ) }}"
+                  alt="{{ machine.name }}">
+
+            {% endif %}
+
+            <h2>
+                {{ machine.name }}
+            </h2>
+
+            <p>
+                Price:
+                {{ money(machine.price) }}
+            </p>
+
+            <p>
+                Daily:
+                {{ money(machine.daily_profit) }}
+            </p>
+
+            <p>
+                Duration:
+                {{ machine.duration_days }} days
+            </p>
+
+            <p>
+                Stock:
+                {{ machine.stock }}
+            </p>
+
+            <p>
+                Expected total:
+                {{ money(machine.total_return) }}
+            </p>
+
+            <p>
+                Status:
+                {{ "Active" if machine.active else "Disabled" }}
+            </p>
+
+            <form method="POST"
+                  enctype="multipart/form-data"
+                  class="form">
+
+                <input type="hidden"
+                       name="action"
+                       value="update">
+
+                <input type="hidden"
+                       name="machine_id"
+                       value="{{ machine.id }}">
+
+                <input
+                    name="name"
+                    value="{{ machine.name }}"
+                    required>
+
+                <textarea
+                    name="description">{{ machine.description }}</textarea>
+
+                <input
+                    type="number"
+                    name="price"
+                    value="{{ machine.price }}"
+                    min="0"
+                    step="1"
+                    required>
+
+                <input
+                    type="number"
+                    name="daily_profit"
+                    value="{{ machine.daily_profit }}"
+                    min="0"
+                    step="1"
+                    required>
+
+                <input
+                    type="number"
+                    name="duration_days"
+                    value="{{ machine.duration_days }}"
+                    min="1"
+                    required>
+
+                <input
+                    type="number"
+                    name="stock"
+                    value="{{ machine.stock }}"
+                    min="0"
+                    required>
+
+                <input
+                    type="file"
+                    name="image"
+                    accept=".jpg,.jpeg,.png,.webp,.gif">
+
+                <button class="btn"
+                        type="submit">
+                    Save Changes
+                </button>
+
+            </form>
+
+            <br>
+
+            <form method="POST"
+                  style="display:inline;">
+
+                <input type="hidden"
+                       name="action"
+                       value="toggle">
+
+                <input type="hidden"
+                       name="machine_id"
+                       value="{{ machine.id }}">
+
+                <button class="btn secondary">
+                    Toggle Active
+                </button>
+
+            </form>
+
+            <form method="POST"
+                  style="display:inline;">
+
+                <input type="hidden"
+                       name="action"
+                       value="delete">
+
+                <input type="hidden"
+                       name="machine_id"
+                       value="{{ machine.id }}">
+
+                <button class="btn danger">
+                    Delete
+                </button>
+
+            </form>
+
+        </div>
+
+    {% endfor %}
+
+    </div>
+    """
+
+    return page(
+        "Machine Management",
+        render_template_string(
+            content,
+            machines=machines,
+            money=format_money
         )
-
-    except sqlite3.IntegrityError:
-
-        flash(
-            "Could not add administrator.",
-            "error",
-        )
-
-    finally:
-
-        connection.close()
-
-    return redirect(
-        url_for("admin")
     )
 
 
 # ============================================================
-# REMOVE ADMIN
+# ADMIN USERS / ADMINS
 # ============================================================
 
 @app.route(
-    "/admin/remove-admin/<int:user_id>",
-    methods=["POST"]
+    "/admin/users",
+    methods=["GET", "POST"]
 )
 @admin_required
-def admin_remove_admin(
-    user_id
-):
+def admin_users():
 
-    connection = db()
+    current_admin = current_user()
 
-    target = connection.execute(
-        """
-        SELECT phone
-        FROM users
-        WHERE id = ?
-        """,
-        (
-            user_id,
-        ),
-    ).fetchone()
+    if request.method == "POST":
 
-    if (
-        target
-        and target["phone"]
-        != ADMIN_PHONE
-    ):
-
-        connection.execute(
-            """
-            UPDATE users
-
-            SET is_admin = 0
-
-            WHERE id = ?
-            """,
-            (
-                user_id,
-            ),
+        action = request.form.get(
+            "action"
         )
 
-        connection.commit()
-
-        flash(
-            "Administrator access removed.",
-            "success",
+        user_id = request.form.get(
+            "user_id"
         )
 
-    else:
+        if action == "toggle":
 
-        flash(
-            "The primary administrator cannot be removed here.",
-            "warning",
+            user = db.session.get(
+                User,
+                int(user_id)
+            )
+
+            if user and user.id != current_admin.id:
+
+                user.is_active = not user.is_active
+
+                db.session.commit()
+
+        elif action == "make_admin":
+
+            user = db.session.get(
+                User,
+                int(user_id)
+            )
+
+            if user:
+
+                user.is_admin = True
+
+                db.session.commit()
+
+                flash(
+                    "User is now an administrator.",
+                    "success"
+                )
+
+        elif action == "remove_admin":
+
+            user = db.session.get(
+                User,
+                int(user_id)
+            )
+
+            if user and user.id != current_admin.id:
+
+                user.is_admin = False
+
+                db.session.commit()
+
+        elif action == "reset_password":
+
+            user = db.session.get(
+                User,
+                int(user_id)
+            )
+
+            new_password = request.form.get(
+                "new_password",
+                ""
+            )
+
+            if user and new_password:
+
+                user.set_password(
+                    new_password
+                )
+
+                db.session.commit()
+
+                flash(
+                    "Password updated.",
+                    "success"
+                )
+
+    users = User.query.order_by(
+        User.created_at.desc()
+    ).all()
+
+    content = """
+    <section class="hero">
+        <h1>Users & Administrators</h1>
+    </section>
+
+    <div class="card">
+
+    <div class="table-wrap">
+
+    <table>
+
+    <tr>
+        <th>Phone</th>
+        <th>Balance</th>
+        <th>Admin</th>
+        <th>Active</th>
+        <th>Created</th>
+        <th>Actions</th>
+    </tr>
+
+    {% for item in users %}
+
+    <tr>
+
+        <td>
+            {{ item.phone }}
+        </td>
+
+        <td>
+            {{ money(item.balance) }}
+        </td>
+
+        <td>
+            {{ "Yes" if item.is_admin else "No" }}
+        </td>
+
+        <td>
+            {{ "Yes" if item.is_active else "No" }}
+        </td>
+
+        <td>
+            {{ item.created_at }}
+        </td>
+
+        <td>
+
+            {% if item.id != current_admin.id %}
+
+            <form method="POST"
+                  style="margin-bottom:7px;">
+
+                <input type="hidden"
+                       name="action"
+                       value="toggle">
+
+                <input type="hidden"
+                       name="user_id"
+                       value="{{ item.id }}">
+
+                <button class="btn secondary">
+                    Enable / Disable
+                </button>
+
+            </form>
+
+            {% if item.is_admin %}
+
+            <form method="POST"
+                  style="margin-bottom:7px;">
+
+                <input type="hidden"
+                       name="action"
+                       value="remove_admin">
+
+                <input type="hidden"
+                       name="user_id"
+                       value="{{ item.id }}">
+
+                <button class="btn warning">
+                    Remove Admin
+                </button>
+
+            </form>
+
+            {% else %}
+
+            <form method="POST"
+                  style="margin-bottom:7px;">
+
+                <input type="hidden"
+                       name="action"
+                       value="make_admin">
+
+                <input type="hidden"
+                       name="user_id"
+                       value="{{ item.id }}">
+
+                <button class="btn">
+                    Make Admin
+                </button>
+
+            </form>
+
+            {% endif %}
+
+            <form method="POST">
+
+                <input type="hidden"
+                       name="action"
+                       value="reset_password">
+
+                <input type="hidden"
+                       name="user_id"
+                       value="{{ item.id }}">
+
+                <input
+                    name="new_password"
+                    placeholder="New password"
+                    required>
+
+                <button class="btn secondary">
+                    Reset Password
+                </button>
+
+            </form>
+
+            {% endif %}
+
+        </td>
+
+    </tr>
+
+    {% endfor %}
+
+    </table>
+
+    </div>
+
+    </div>
+    """
+
+    return page(
+        "Admin Users",
+        render_template_string(
+            content,
+            users=users,
+            current_admin=current_admin,
+            money=format_money
         )
-
-    connection.close()
-
-    return redirect(
-        url_for("admin")
     )
+
+
+# ============================================================
+# ADMIN NOTIFICATIONS
+# ============================================================
+
+@app.route(
+    "/admin/notifications",
+    methods=["GET", "POST"]
+)
+@admin_required
+def admin_notifications():
+
+    if request.method == "POST":
+
+        action = request.form.get(
+            "action"
+        )
+
+        if action == "add":
+
+            title = request.form.get(
+                "title",
+                ""
+            ).strip()
+
+            message = request.form.get(
+                "message",
+                ""
+            ).strip()
+
+            if title and message:
+
+                db.session.add(
+                    Notification(
+                        title=title,
+                        message=message,
+                        active=True
+                    )
+                )
+
+                db.session.commit()
+
+                flash(
+                    "Notification published.",
+                    "success"
+                )
+
+        elif action == "toggle":
+
+            notification_id = int(
+                request.form.get(
+                    "notification_id"
+                )
+            )
+
+            item = db.session.get(
+                Notification,
+                notification_id
+            )
+
+            if item:
+
+                item.active = not item.active
+
+                db.session.commit()
+
+        elif action == "delete":
+
+            notification_id = int(
+                request.form.get(
+                    "notification_id"
+                )
+            )
+
+            item = db.session.get(
+                Notification,
+                notification_id
+            )
+
+            if item:
+
+                NotificationRead.query.filter_by(
+                    notification_id=item.id
+                ).delete()
+
+                db.session.delete(
+                    item
+                )
+
+                db.session.commit()
+
+    notifications = Notification.query.order_by(
+        Notification.created_at.desc()
+    ).all()
+
+    content = """
+    <section class="hero">
+        <h1>Notification Management</h1>
+    </section>
+
+    <div class="card">
+
+        <h2>Publish Update</h2>
+
+        <form class="form"
+              method="POST">
+
+            <input type="hidden"
+                   name="action"
+                   value="add">
+
+            <label>
+                Title
+            </label>
+
+            <input
+                name="title"
+                required>
+
+            <label>
+                Message
+            </label>
+
+            <textarea
+                name="message"
+                required></textarea>
+
+            <button class="btn">
+                Publish Notification
+            </button>
+
+        </form>
+
+    </div>
+
+    <br>
+
+    <div class="grid">
+
+    {% for item in notifications %}
+
+        <div class="card">
+
+            <h2>
+                {{ item.title }}
+            </h2>
+
+            <p>
+                {{ item.message }}
+            </p>
+
+            <p>
+                Status:
+                {{ "Active" if item.active else "Hidden" }}
+            </p>
+
+            <form method="POST"
+                  style="display:inline;">
+
+                <input type="hidden"
+                       name="action"
+                       value="toggle">
+
+                <input type="hidden"
+                       name="notification_id"
+                       value="{{ item.id }}">
+
+                <button class="btn secondary">
+                    Toggle
+                </button>
+
+            </form>
+
+            <form method="POST"
+                  style="display:inline;">
+
+                <input type="hidden"
+                       name="action"
+                       value="delete">
+
+                <input type="hidden"
+                       name="notification_id"
+                       value="{{ item.id }}">
+
+                <button class="btn danger">
+                    Delete
+                </button>
+
+            </form>
+
+        </div>
+
+    {% endfor %}
+
+    </div>
+    """
+
+    return page(
+        "Notifications",
+        render_template_string(
+            content,
+            notifications=notifications
+        )
+    )
+
+
+# ============================================================
+# ADMIN CHAT
+# ============================================================
+
+@app.route(
+    "/admin/chat",
+    methods=["GET", "POST"]
+)
+@admin_required
+def admin_chat():
+
+    if request.method == "POST":
+
+        user_id = int(
+            request.form.get(
+                "user_id"
+            )
+        )
+
+        message = request.form.get(
+            "message",
+            ""
+        ).strip()
+
+        user = db.session.get(
+            User,
+            user_id
+        )
+
+        if user and message:
+
+            db.session.add(
+                ChatMessage(
+                    user_id=user.id,
+                    sender="admin",
+                    message=message
+                )
+            )
+
+            db.session.commit()
+
+            flash(
+                "Reply sent.",
+                "success"
+            )
+
+    users = User.query.filter(
+        User.is_admin == False
+    ).order_by(
+        User.created_at.desc()
+    ).all()
+
+    selected_id = request.args.get(
+        "user_id"
+    )
+
+    selected_user = None
+
+    messages = []
+
+    if selected_id:
+
+        selected_user = db.session.get(
+            User,
+            int(selected_id)
+        )
+
+        if selected_user:
+
+            messages = ChatMessage.query.filter_by(
+                user_id=selected_user.id
+            ).order_by(
+                ChatMessage.created_at.asc()
+            ).all()
+
+    content = """
+    <section class="hero">
+        <h1>Admin Chat</h1>
+    </section>
+
+    <div class="grid">
+
+        <div class="card">
+
+            <h2>Users</h2>
+
+            {% for item in users %}
+
+            <p>
+                <a class="btn secondary"
+                   href="{{ url_for(
+                       'admin_chat',
+                       user_id=item.id
+                   ) }}">
+                    {{ item.phone }}
+                </a>
+            </p>
+
+            {% endfor %}
+
+        </div>
+
+        <div class="card">
+
+        {% if selected_user %}
+
+            <h2>
+                Chat:
+                {{ selected_user.phone }}
+            </h2>
+
+            <div class="chat-box">
+
+            {% for item in messages %}
+
+                <div class="chat-message
+                    {% if item.sender == 'admin' %}
+                    admin
+                    {% endif %}">
+
+                    <strong>
+                        {{ item.sender }}
+                    </strong>
+
+                    <p>
+                        {{ item.message }}
+                    </p>
+
+                </div>
+
+            {% endfor %}
+
+            </div>
+
+            <form method="POST"
+                  class="form"
+                  style="margin-top:15px;">
+
+                <input type="hidden"
+                       name="user_id"
+                       value="{{ selected_user.id }}">
+
+                <textarea
+                    name="message"
+                    required></textarea>
+
+                <button class="btn">
+                    Send Reply
+                </button>
+
+            </form>
+
+        {% else %}
+
+            <p class="muted">
+                Select a user.
+            </p>
+
+        {% endif %}
+
+        </div>
+
+    </div>
+    """
+
+    return page(
+        "Admin Chat",
+        render_template_string(
+            content,
+            users=users,
+            selected_user=selected_user,
+            messages=messages
+        )
+    )
+
+
+# ============================================================
+# ADMIN CHART
+# ============================================================
+
+@app.route("/admin/chart")
+@admin_required
+def admin_chart():
+
+    now = utc_now()
+
+    labels = []
+    deposit_values = []
+    withdrawal_values = []
+    joiner_values = []
+
+    # Last 7 days.
+    for offset in range(6, -1, -1):
+
+        day = (
+            now.date()
+            - timedelta(days=offset)
+        )
+
+        start = datetime.combine(
+            day,
+            datetime.min.time()
+        )
+
+        end = start + timedelta(
+            days=1
+        )
+
+        labels.append(
+            day.strftime("%d %b")
+        )
+
+        deposits = db.session.query(
+            db.func.coalesce(
+                db.func.sum(
+                    Deposit.amount
+                ),
+                0
+            )
+        ).filter(
+            Deposit.status == "approved",
+            Deposit.created_at >= start,
+            Deposit.created_at < end
+        ).scalar()
+
+        withdrawals = db.session.query(
+            db.func.coalesce(
+                db.func.sum(
+                    Withdrawal.net_amount
+                ),
+                0
+            )
+        ).filter(
+            Withdrawal.status == "approved",
+            Withdrawal.created_at >= start,
+            Withdrawal.created_at < end
+        ).scalar()
+
+        joiners = User.query.filter(
+            User.created_at >= start,
+            User.created_at < end
+        ).count()
+
+        deposit_values.append(
+            float(deposits or 0)
+        )
+
+        withdrawal_values.append(
+            float(withdrawals or 0)
+        )
+
+        joiner_values.append(
+            joiners
+        )
+
+    content = """
+    <section class="hero">
+        <h1>DATA4MINE Statistics</h1>
+        <p>
+            Seven-day deposit, withdrawal and joiner statistics.
+        </p>
+    </section>
+
+    <div class="card">
+
+        <canvas
+            id="chart"
+            height="120">
+        </canvas>
+
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script>
+
+    const labels =
+        {{ labels|tojson }};
+
+    const deposits =
+        {{ deposit_values|tojson }};
+
+    const withdrawals =
+        {{ withdrawal_values|tojson }};
+
+    const joiners =
+        {{ joiner_values|tojson }};
+
+    new Chart(
+        document.getElementById(
+            "chart"
+        ),
+        {
+            type: "line",
+
+            data: {
+                labels: labels,
+
+                datasets: [
+
+                    {
+                        label:
+                            "Approved Deposits",
+
+                        data:
+                            deposits,
+
+                        tension: .3
+                    },
+
+                    {
+                        label:
+                            "Approved Withdrawals",
+
+                        data:
+                            withdrawals,
+
+                        tension: .3
+                    },
+
+                    {
+                        label:
+                            "Joiners",
+
+                        data:
+                            joiners,
+
+                        tension: .3
+                    }
+
+                ]
+            },
+
+            options: {
+                responsive: true,
+
+                plugins: {
+                    legend: {
+                        labels: {
+                            color: "#ffffff"
+                        }
+                    }
+                },
+
+                scales: {
+                    x: {
+                        ticks: {
+                            color: "#ffffff"
+                        }
+                    },
+
+                    y: {
+                        ticks: {
+                            color: "#ffffff"
+                        }
+                    }
+                }
+            }
+        }
+    );
+
+    </script>
+    """
+
+    return page(
+        "Admin Statistics",
+        render_template_string(
+            content,
+            labels=labels,
+            deposit_values=deposit_values,
+            withdrawal_values=withdrawal_values,
+            joiner_values=joiner_values
+        )
+    )
+
+
+# ============================================================
+# ADMIN BACKGROUND IMAGE UPLOAD
+# ============================================================
+
+@app.route(
+    "/admin/background",
+    methods=["GET", "POST"]
+)
+@admin_required
+def admin_background():
+
+    if request.method == "POST":
+
+        image = request.files.get(
+            "image"
+        )
+
+        if image and image.filename:
+
+            if not allowed_image(
+                image.filename
+            ):
+
+                flash(
+                    "Invalid image type.",
+                    "error"
+                )
+
+                return redirect(
+                    url_for(
+                        "admin_background"
+                    )
+                )
+
+            original = secure_filename(
+                image.filename
+            )
+
+            extension = original.rsplit(
+                ".",
+                1
+            )[1].lower()
+
+            filename = (
+                "background."
+                + extension
+            )
+
+            # Remove old background images.
+            for existing in os.listdir(
+                BACKGROUND_DIR
+            ):
+
+                existing_path = os.path.join(
+                    BACKGROUND_DIR,
+                    existing
+                )
+
+                if os.path.isfile(
+                    existing_path
+                ):
+
+                    try:
+                        os.remove(
+                            existing_path
+                        )
+                    except Exception:
+                        pass
+
+            image.save(
+                os.path.join(
+                    BACKGROUND_DIR,
+                    filename
+                )
+            )
+
+            flash(
+                "Background image uploaded.",
+                "success"
+            )
+
+    content = """
+    <section class="hero">
+        <h1>Background Image</h1>
+    </section>
+
+    <div class="card">
+
+        <p>
+            Upload one machine/background image.
+            The application looks for the latest
+            background image in static/background/.
+        </p>
+
+        <form class="form"
+              method="POST"
+              enctype="multipart/form-data">
+
+            <input
+                type="file"
+                name="image"
+                accept=".jpg,.jpeg,.png,.webp,.gif"
+                required>
+
+            <button class="btn">
+                Upload Background
+            </button>
+
+        </form>
+
+    </div>
+    """
+
+    return page(
+        "Background",
+        content
+    )
+
+
+# ============================================================
+# 404 / 500 ERROR HANDLERS
+# ============================================================
+
+@app.errorhandler(404)
+def not_found(error):
+
+    content = """
+    <section class="hero">
+        <h1>Page Not Found</h1>
+
+        <p>
+            The page you requested does not exist.
+        </p>
+
+        <a class="btn"
+           href="{{ url_for('index') }}">
+            Go Home
+        </a>
+    </section>
+    """
+
+    return page(
+        "Page Not Found",
+        content
+    ), 404
+
+
+@app.errorhandler(500)
+def internal_error(error):
+
+    # Roll back a failed database transaction.
+    try:
+        db.session.rollback()
+    except Exception:
+        pass
+
+    content = """
+    <section class="hero">
+        <h1>Something Went Wrong</h1>
+
+        <p>
+            The server encountered an error.
+            The database session has been reset.
+        </p>
+
+        <a class="btn"
+           href="{{ url_for('index') }}">
+            Return Home
+        </a>
+    </section>
+    """
+
+    return page(
+        "Server Error",
+        content
+    ), 500
 
 
 # ============================================================
@@ -5655,127 +6068,25 @@ def health():
 
     return {
         "status": "ok",
-        "service": COMPANY_NAME,
+        "app": "DATA4MINE"
     }
 
 
 # ============================================================
-# 404
-# ============================================================
-
-@app.errorhandler(404)
-def not_found(error):
-
-    return (
-        render_page(
-            "Not Found",
-            """
-            <div class="card">
-
-                <h1>
-                    Page Not Found
-                </h1>
-
-                <p>
-                    The page you requested
-                    does not exist.
-                </p>
-
-                <a
-                    class="btn"
-                    href="/dashboard"
-                >
-                    Dashboard
-                </a>
-
-            </div>
-            """,
-        ),
-        404,
-    )
-
-
-# ============================================================
-# 500
-# ============================================================
-
-@app.errorhandler(500)
-def server_error(error):
-
-    return (
-        render_page(
-            "Server Error",
-            """
-            <div class="card">
-
-                <h1>
-                    Server Error
-                </h1>
-
-                <p>
-                    An application error occurred.
-                    Check the server logs for details.
-                </p>
-
-                <a
-                    class="btn"
-                    href="/dashboard"
-                >
-                    Dashboard
-                </a>
-
-            </div>
-            """,
-        ),
-        500,
-    )
-
-
-# ============================================================
-# INITIALIZE DATABASE
-# ============================================================
-
-init_db()
-
-
-# ============================================================
-# LOCAL RUN
+# RUN SERVER
 # ============================================================
 
 if __name__ == "__main__":
 
     port = int(
-        os.getenv(
+        os.environ.get(
             "PORT",
-            "5000",
+            "5000"
         )
     )
-
-    print("=" * 60)
-
-    print(
-        f"{COMPANY_NAME} running on "
-        f"http://127.0.0.1:{port}"
-    )
-
-    print(
-        f"Admin phone: {ADMIN_PHONE}"
-    )
-
-    print(
-        "Admin password is configured "
-        "through ADMIN_PASSWORD."
-    )
-
-    print(
-        "Render start command:"
-        " gunicorn app:app"
-    )
-
-    print("=" * 60)
 
     app.run(
         host="0.0.0.0",
         port=port,
-        debug=False,
+        debug=False
     )
